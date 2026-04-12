@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+scikit-learn
+plotly
+streamlit-autorefresh
+scikit-learn
+joblib
+requests
+google-generativeai
+python-dotenv
