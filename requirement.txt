@@ -8,3 +8,10 @@ joblib
 requests
 google-generativeai
 python-dotenv
+streamlit
+pandas
+scikit-learn
+joblib
+requests
+google-generativeai
+python-dotenv
