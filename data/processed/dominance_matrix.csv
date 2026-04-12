@@ -1,0 +1,132 @@
+matchup,winner,wins,total_matches,dominance_score
+Chennai Super Kings vs Delhi Capitals,Chennai Super Kings,19,30,0.63
+Chennai Super Kings vs Delhi Capitals,Delhi Capitals,11,30,0.37
+Chennai Super Kings vs Gujarat Titans,Chennai Super Kings,3,7,0.43
+Chennai Super Kings vs Gujarat Titans,Gujarat Titans,4,7,0.57
+Chennai Super Kings vs Kochi Tuskers Kerala,Chennai Super Kings,1,2,0.5
+Chennai Super Kings vs Kochi Tuskers Kerala,Kochi Tuskers Kerala,1,2,0.5
+Chennai Super Kings vs Kolkata Knight Riders,Chennai Super Kings,19,29,0.66
+Chennai Super Kings vs Kolkata Knight Riders,Kolkata Knight Riders,10,29,0.34
+Chennai Super Kings vs Lucknow Super Giants,Chennai Super Kings,1,5,0.2
+Chennai Super Kings vs Lucknow Super Giants,Lucknow Super Giants,3,5,0.6
+Chennai Super Kings vs Mumbai Indians,Chennai Super Kings,17,37,0.46
+Chennai Super Kings vs Mumbai Indians,Mumbai Indians,20,37,0.54
+Chennai Super Kings vs Pune Warriors,Chennai Super Kings,4,6,0.67
+Chennai Super Kings vs Pune Warriors,Pune Warriors,2,6,0.33
+Chennai Super Kings vs Punjab Kings,Chennai Super Kings,16,30,0.53
+Chennai Super Kings vs Punjab Kings,Punjab Kings,14,30,0.47
+Chennai Super Kings vs Rajasthan Royals,Chennai Super Kings,16,29,0.55
+Chennai Super Kings vs Rajasthan Royals,Rajasthan Royals,13,29,0.45
+Chennai Super Kings vs Royal Challengers Bengaluru,Chennai Super Kings,21,32,0.66
+Chennai Super Kings vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,11,32,0.34
+Chennai Super Kings vs Sunrisers Hyderabad,Chennai Super Kings,21,31,0.68
+Chennai Super Kings vs Sunrisers Hyderabad,Sunrisers Hyderabad,10,31,0.32
+Delhi Capitals vs Gujarat Titans,Delhi Capitals,6,9,0.67
+Delhi Capitals vs Gujarat Titans,Gujarat Titans,3,9,0.33
+Delhi Capitals vs Kochi Tuskers Kerala,Delhi Capitals,1,2,0.5
+Delhi Capitals vs Kochi Tuskers Kerala,Kochi Tuskers Kerala,1,2,0.5
+Delhi Capitals vs Kolkata Knight Riders,Delhi Capitals,15,33,0.45
+Delhi Capitals vs Kolkata Knight Riders,Kolkata Knight Riders,18,33,0.55
+Delhi Capitals vs Lucknow Super Giants,Delhi Capitals,2,5,0.4
+Delhi Capitals vs Lucknow Super Giants,Lucknow Super Giants,3,5,0.6
+Delhi Capitals vs Mumbai Indians,Delhi Capitals,16,35,0.46
+Delhi Capitals vs Mumbai Indians,Mumbai Indians,19,35,0.54
+Delhi Capitals vs Pune Warriors,Delhi Capitals,3,6,0.5
+Delhi Capitals vs Pune Warriors,Pune Warriors,2,6,0.33
+Delhi Capitals vs Punjab Kings,Delhi Capitals,16,33,0.48
+Delhi Capitals vs Punjab Kings,Punjab Kings,17,33,0.52
+Delhi Capitals vs Rajasthan Royals,Delhi Capitals,14,29,0.48
+Delhi Capitals vs Rajasthan Royals,Rajasthan Royals,15,29,0.52
+Delhi Capitals vs Rising Pune Supergiant,Delhi Capitals,2,4,0.5
+Delhi Capitals vs Rising Pune Supergiant,Rising Pune Supergiant,2,4,0.5
+Delhi Capitals vs Royal Challengers Bengaluru,Delhi Capitals,11,31,0.35
+Delhi Capitals vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,19,31,0.61
+Delhi Capitals vs Sunrisers Hyderabad,Delhi Capitals,18,35,0.51
+Delhi Capitals vs Sunrisers Hyderabad,Sunrisers Hyderabad,17,35,0.49
+Gujarat Titans vs Kolkata Knight Riders,Gujarat Titans,5,7,0.71
+Gujarat Titans vs Kolkata Knight Riders,Kolkata Knight Riders,2,7,0.29
+Gujarat Titans vs Lucknow Super Giants,Gujarat Titans,4,5,0.8
+Gujarat Titans vs Lucknow Super Giants,Lucknow Super Giants,1,5,0.2
+Gujarat Titans vs Mumbai Indians,Gujarat Titans,5,9,0.56
+Gujarat Titans vs Mumbai Indians,Mumbai Indians,4,9,0.44
+Gujarat Titans vs Punjab Kings,Gujarat Titans,5,9,0.56
+Gujarat Titans vs Punjab Kings,Punjab Kings,4,9,0.44
+Gujarat Titans vs Rajasthan Royals,Gujarat Titans,5,6,0.83
+Gujarat Titans vs Rajasthan Royals,Rajasthan Royals,1,6,0.17
+Gujarat Titans vs Rising Pune Supergiant,Gujarat Titans,3,4,0.75
+Gujarat Titans vs Rising Pune Supergiant,Rising Pune Supergiant,1,4,0.25
+Gujarat Titans vs Royal Challengers Bengaluru,Gujarat Titans,4,10,0.4
+Gujarat Titans vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,6,10,0.6
+Gujarat Titans vs Sunrisers Hyderabad,Gujarat Titans,3,9,0.33
+Gujarat Titans vs Sunrisers Hyderabad,Sunrisers Hyderabad,6,9,0.67
+Kochi Tuskers Kerala vs Kolkata Knight Riders,Kochi Tuskers Kerala,2,2,1.0
+Kochi Tuskers Kerala vs Mumbai Indians,Kochi Tuskers Kerala,1,1,1.0
+Kochi Tuskers Kerala vs Pune Warriors,Pune Warriors,1,1,1.0
+Kochi Tuskers Kerala vs Punjab Kings,Punjab Kings,1,1,1.0
+Kochi Tuskers Kerala vs Rajasthan Royals,Kochi Tuskers Kerala,1,2,0.5
+Kochi Tuskers Kerala vs Rajasthan Royals,Rajasthan Royals,1,2,0.5
+Kochi Tuskers Kerala vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,2,2,1.0
+Kochi Tuskers Kerala vs Sunrisers Hyderabad,Sunrisers Hyderabad,1,1,1.0
+Kolkata Knight Riders vs Lucknow Super Giants,Kolkata Knight Riders,2,5,0.4
+Kolkata Knight Riders vs Lucknow Super Giants,Lucknow Super Giants,3,5,0.6
+Kolkata Knight Riders vs Mumbai Indians,Kolkata Knight Riders,11,34,0.32
+Kolkata Knight Riders vs Mumbai Indians,Mumbai Indians,23,34,0.68
+Kolkata Knight Riders vs Pune Warriors,Kolkata Knight Riders,4,5,0.8
+Kolkata Knight Riders vs Pune Warriors,Pune Warriors,1,5,0.2
+Kolkata Knight Riders vs Punjab Kings,Kolkata Knight Riders,21,33,0.64
+Kolkata Knight Riders vs Punjab Kings,Punjab Kings,12,33,0.36
+Kolkata Knight Riders vs Rajasthan Royals,Kolkata Knight Riders,14,28,0.5
+Kolkata Knight Riders vs Rajasthan Royals,Rajasthan Royals,14,28,0.5
+Kolkata Knight Riders vs Rising Pune Supergiant,Kolkata Knight Riders,3,4,0.75
+Kolkata Knight Riders vs Rising Pune Supergiant,Rising Pune Supergiant,1,4,0.25
+Kolkata Knight Riders vs Royal Challengers Bengaluru,Kolkata Knight Riders,20,34,0.59
+Kolkata Knight Riders vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,14,34,0.41
+Kolkata Knight Riders vs Sunrisers Hyderabad,Kolkata Knight Riders,26,37,0.7
+Kolkata Knight Riders vs Sunrisers Hyderabad,Sunrisers Hyderabad,11,37,0.3
+Lucknow Super Giants vs Mumbai Indians,Lucknow Super Giants,5,6,0.83
+Lucknow Super Giants vs Mumbai Indians,Mumbai Indians,1,6,0.17
+Lucknow Super Giants vs Punjab Kings,Lucknow Super Giants,3,4,0.75
+Lucknow Super Giants vs Punjab Kings,Punjab Kings,1,4,0.25
+Lucknow Super Giants vs Rajasthan Royals,Lucknow Super Giants,1,5,0.2
+Lucknow Super Giants vs Rajasthan Royals,Rajasthan Royals,4,5,0.8
+Lucknow Super Giants vs Royal Challengers Bengaluru,Lucknow Super Giants,2,5,0.4
+Lucknow Super Giants vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,3,5,0.6
+Lucknow Super Giants vs Sunrisers Hyderabad,Lucknow Super Giants,3,4,0.75
+Lucknow Super Giants vs Sunrisers Hyderabad,Sunrisers Hyderabad,1,4,0.25
+Mumbai Indians vs Pune Warriors,Mumbai Indians,5,6,0.83
+Mumbai Indians vs Pune Warriors,Pune Warriors,1,6,0.17
+Mumbai Indians vs Punjab Kings,Mumbai Indians,17,32,0.53
+Mumbai Indians vs Punjab Kings,Punjab Kings,15,32,0.47
+Mumbai Indians vs Rajasthan Royals,Mumbai Indians,15,29,0.52
+Mumbai Indians vs Rajasthan Royals,Rajasthan Royals,14,29,0.48
+Mumbai Indians vs Rising Pune Supergiant,Mumbai Indians,2,6,0.33
+Mumbai Indians vs Rising Pune Supergiant,Rising Pune Supergiant,4,6,0.67
+Mumbai Indians vs Royal Challengers Bengaluru,Mumbai Indians,19,33,0.58
+Mumbai Indians vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,14,33,0.42
+Mumbai Indians vs Sunrisers Hyderabad,Mumbai Indians,19,33,0.58
+Mumbai Indians vs Sunrisers Hyderabad,Sunrisers Hyderabad,14,33,0.42
+Pune Warriors vs Punjab Kings,Pune Warriors,3,6,0.5
+Pune Warriors vs Punjab Kings,Punjab Kings,3,6,0.5
+Pune Warriors vs Rajasthan Royals,Pune Warriors,1,5,0.2
+Pune Warriors vs Rajasthan Royals,Rajasthan Royals,4,5,0.8
+Pune Warriors vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,5,5,1.0
+Pune Warriors vs Sunrisers Hyderabad,Pune Warriors,1,6,0.17
+Pune Warriors vs Sunrisers Hyderabad,Sunrisers Hyderabad,5,6,0.83
+Punjab Kings vs Rajasthan Royals,Punjab Kings,12,28,0.43
+Punjab Kings vs Rajasthan Royals,Rajasthan Royals,16,28,0.57
+Punjab Kings vs Rising Pune Supergiant,Punjab Kings,2,4,0.5
+Punjab Kings vs Rising Pune Supergiant,Rising Pune Supergiant,2,4,0.5
+Punjab Kings vs Royal Challengers Bengaluru,Punjab Kings,17,33,0.52
+Punjab Kings vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,16,33,0.48
+Punjab Kings vs Sunrisers Hyderabad,Punjab Kings,14,33,0.42
+Punjab Kings vs Sunrisers Hyderabad,Sunrisers Hyderabad,19,33,0.58
+Rajasthan Royals vs Royal Challengers Bengaluru,Rajasthan Royals,14,31,0.45
+Rajasthan Royals vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,15,31,0.48
+Rajasthan Royals vs Sunrisers Hyderabad,Rajasthan Royals,16,29,0.55
+Rajasthan Royals vs Sunrisers Hyderabad,Sunrisers Hyderabad,13,29,0.45
+Rising Pune Supergiant vs Royal Challengers Bengaluru,Rising Pune Supergiant,2,4,0.5
+Rising Pune Supergiant vs Royal Challengers Bengaluru,Royal Challengers Bengaluru,2,4,0.5
+Rising Pune Supergiant vs Sunrisers Hyderabad,Rising Pune Supergiant,3,4,0.75
+Rising Pune Supergiant vs Sunrisers Hyderabad,Sunrisers Hyderabad,1,4,0.25
+Royal Challengers Bengaluru vs Sunrisers Hyderabad,Royal Challengers Bengaluru,16,35,0.46
+Royal Challengers Bengaluru vs Sunrisers Hyderabad,Sunrisers Hyderabad,19,35,0.54

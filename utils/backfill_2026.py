@@ -1,0 +1,108 @@
+import requests
+import pandas as pd
+import os
+import time
+import re
+
+# --- CONFIGURATION ---
+CRICBUZZ_KEY = "GEMINI_API_KEY" # Put your key here!
+API_HOST = "cricbuzz-cricket.p.rapidapi.com"
+MATCHES_CSV_PATH = '../data/raw/matches_current_season.csv'
+
+def run_backfill():
+    print("🚀 Starting Advanced IPL 2026 Historical Backfill...")
+    url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent"
+    headers = {"X-RapidAPI-Key": CRICBUZZ_KEY, "X-RapidAPI-Host": API_HOST}
+
+    try:
+        response = requests.get(url, headers=headers).json()
+        missed_matches = []
+        
+        for match_type in response.get('typeMatches', []):
+            for series in match_type.get('seriesMatches', []):
+                series_name = series.get('seriesAdWrapper', {}).get('seriesName', '')
+                
+                if 'Indian Premier League' in series_name or 'IPL' in series_name:
+                    print(f"✅ Found IPL Series: {series_name}")
+                    
+                    for match in series.get('seriesAdWrapper', {}).get('matches', []):
+                        match_info = match.get('matchInfo', {})
+                        if match_info.get('state', '') == 'Complete':
+                            
+                            team1 = match_info['team1']['teamName']
+                            team2 = match_info['team2']['teamName']
+                            city = match_info.get('venueInfo', {}).get('city', 'Unknown')
+                            venue = match_info.get('venueInfo', {}).get('ground', 'Unknown Stadium')
+                            status = match_info.get('status', '')
+                            
+                            # Grab Toss Info
+                            toss_winner = match_info.get('tossResults', {}).get('tossWinnerName', 'Unknown')
+                            toss_decision = match_info.get('tossResults', {}).get('decision', 'Unknown')
+                            
+                            # Parse win_by_runs and win_by_wickets using Regex
+                            win_by_runs = 0
+                            win_by_wickets = 0
+                            
+                            if 'runs' in status.lower():
+                                match_val = re.search(r'(\d+)\s*runs', status, re.IGNORECASE)
+                                if match_val: win_by_runs = int(match_val.group(1))
+                            elif 'wickets' in status.lower():
+                                match_val = re.search(r'(\d+)\s*wickets', status, re.IGNORECASE)
+                                if match_val: win_by_wickets = int(match_val.group(1))
+                            
+                            match_id = f"{team1}_vs_{team2}_{match_info.get('matchEndTimestamp', time.time())}"
+                            
+                            winner = "Tie/No Result"
+                            if team1 in status: winner = team1
+                            elif team2 in status: winner = team2
+                            
+                            missed_matches.append({
+                                'id': match_id,  # Changed to 'id' to match original dataset
+                                'season': '2026', # Hardcoded for this year
+                                'date': time.strftime('%Y-%m-%d', time.localtime(int(match_info.get('matchEndTimestamp', time.time()*1000))/1000)),
+                                'team1': team1,
+                                'team2': team2,
+                                'toss_winner': toss_winner,
+                                'toss_decision': toss_decision.lower(), # 'bat' or 'field'
+                                'winner': winner,
+                                'win_by_runs': win_by_runs,
+                                'win_by_wickets': win_by_wickets,
+                                'venue': venue,
+                                'city': city,
+                                'margin_string': status
+                            })
+
+        if not missed_matches:
+            print("⚠️ No completed IPL matches found in the recent endpoint.")
+            return
+
+        # Convert to DataFrame
+        new_data = pd.DataFrame(missed_matches)
+        os.makedirs(os.path.dirname(MATCHES_CSV_PATH), exist_ok=True)
+        
+        if not os.path.exists(MATCHES_CSV_PATH):
+            new_data.to_csv(MATCHES_CSV_PATH, index=False)
+            print(f"📁 Created advanced database! Backfilled {len(new_data)} matches with full toss/venue data.")
+        else:
+            existing_df = pd.read_csv(MATCHES_CSV_PATH)
+            
+            # --- THE SELF-HEALING FIX ---
+            # If the old CSV has 'match_id' instead of 'id', overwrite the whole file!
+            if 'id' not in existing_df.columns:
+                print("♻️ Old database schema detected. Automatically upgrading to advanced schema...")
+                new_data.to_csv(MATCHES_CSV_PATH, index=False)
+                print(f"📁 Advanced database ready! Backfilled {len(new_data)} matches.")
+            else:
+                # Normal duplicate check
+                new_data = new_data[~new_data['id'].isin(existing_df['id'])]
+                if new_data.empty:
+                    print("👍 Database is already fully up-to-date!")
+                else:
+                    new_data.to_csv(MATCHES_CSV_PATH, mode='a', header=False, index=False)
+                    print(f"💾 Successfully backfilled {len(new_data)} new matches!")
+
+    except Exception as e:
+        print(f"❌ Backfill Error: {e}")
+
+if __name__ == "__main__":
+    run_backfill()
