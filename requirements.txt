@@ -9,3 +9,5 @@ joblib
 requests
 google-generativeai
 python-dotenv
+xgboost
+lightgbm
