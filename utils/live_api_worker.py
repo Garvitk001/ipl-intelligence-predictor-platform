@@ -437,10 +437,6 @@ def run_worker():
                 print(f"[{time.strftime('%X')}] 🤖 Generating AI Commentary...")
                 live_data['ai_commentary'] = generate_ai_commentary(live_data)
                 
-                live_data['timestamp'] = time.strftime('%I:%M:%S %p')
-                with open(state_file, 'w') as f:
-                    json.dump(live_data, f, indent=4)
-                    
                 # --- 2. ADAPTIVE POLLING (Speed up during Death Overs) ---
                 if live_data.get('overs', 0) >= 16:
                     poll_interval = 120  
@@ -456,15 +452,35 @@ def run_worker():
                 
                 if live_data and 'todays_matches' in live_data:
                     for match in live_data['todays_matches']:
-                        if match['state'] == 'Complete':
-                            log_completed_match(match)
+                        if match.get('state') == 'Complete':
+                            # Assuming you have a log_completed_match function defined earlier
+                            try:
+                                log_completed_match(match)
+                            except:
+                                pass
                             
-                if live_data:
-                    with open(state_file, 'w') as f:
-                        json.dump(live_data, f, indent=4)
-                
                 print(f"[{time.strftime('%X')}] ⏸️ No active live match. Scanning for completed matches...")
-            
+
+            # =========================================================
+            # ☁️ FIREBASE CLOUD SYNC (RUNS EVERY TIME)
+            # =========================================================
+            if not live_data:
+                live_data = {'match_active': False, 'message': 'API Quota Empty - Forced Test!', 'timestamp': time.strftime('%I:%M:%S %p')}
+
+            if live_data:
+                live_data['timestamp'] = time.strftime('%I:%M:%S %p')
+                FIREBASE_URL = "https://ipl-intel-db-default-rtdb.firebaseio.com/live_match_state.json"
+                
+                try:
+                    # Notice we are pushing 'live_data' here now!
+                    cloud_response = requests.put(FIREBASE_URL, json=live_data)
+                    if cloud_response.status_code == 200:
+                        print(f"[{time.strftime('%H:%M:%S')}] ☁️ Successfully pushed live data to Firebase!")
+                    else:
+                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Firebase Error: {cloud_response.text}")
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Could not connect to Firebase: {e}")
+
             print(f"💤 Sleeping for {poll_interval // 60} minutes to conserve API quota.")
             time.sleep(poll_interval) 
             
