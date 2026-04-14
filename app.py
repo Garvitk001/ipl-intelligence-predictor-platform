@@ -57,26 +57,31 @@ preprocessor, model, shap_explainer, live_pp, live_mid, live_death = load_ml_ass
 form_df, dom_df, venue_df = load_processed_data()
 deliveries_df, matches_df = load_deliveries_data()
 
-## --- 2. GLOBAL LIVE STATE AWARENESS ---
-live_state_file = 'data/processed/live_match_state.json'
-global_is_live = False
-global_t1 = None
-global_t2 = None
-global_striker = None       
-global_current_bowler = None 
+# --- 2. FIREBASE CLOUD DATABASE CONNECTOR ---
+FIREBASE_URL = "https://ipl-intel-db-default-rtdb.firebaseio.com/live_match_state.json"
 
-try:
-    with open(live_state_file, 'r') as f:
-        live_env = json.load(f)
-        if live_env.get('match_active'):
-            global_is_live = True
-            global_t1 = live_env.get('batting_team')
-            global_t2 = live_env.get('bowling_team')
-            global_striker = live_env.get('striker')            
-            global_current_bowler = live_env.get('current_bowler') 
-            st.success(f"🔴 LIVE MATCH DETECTED: **{global_t1}** vs **{global_t2}** — Tabs auto-synced!")
-except:
-    pass
+def fetch_firebase_live_data():
+    """Reads the live match state directly from the Firebase Cloud Database."""
+    try:
+        response = requests.get(FIREBASE_URL)
+        if response.status_code == 200:
+            data = response.json()
+            return data if data else {'match_active': False, 'timestamp': 'Database is empty'}
+        else:
+            return {'match_active': False, 'timestamp': f'Firebase Error: {response.status_code}'}
+    except Exception as e:
+        return {'match_active': False, 'timestamp': f'Cloud Connection Error: {str(e)}'}
+
+# Fetch initial state for global dropdown syncing
+initial_cloud_state = fetch_firebase_live_data()
+global_is_live = initial_cloud_state.get('match_active', False)
+global_t1 = initial_cloud_state.get('batting_team')
+global_t2 = initial_cloud_state.get('bowling_team')
+global_striker = initial_cloud_state.get('striker', 'Unknown')      
+global_current_bowler = initial_cloud_state.get('current_bowler', 'Unknown') 
+
+if global_is_live:
+    st.success(f"🔴 LIVE MATCH DETECTED: **{global_t1}** vs **{global_t2}** — Tabs auto-synced!")
 
 def get_team_index(team_name, team_list, default_idx=0):
     if team_name in team_list:
@@ -86,81 +91,6 @@ def get_team_index(team_name, team_list, default_idx=0):
 team_choices = sorted(form_df['team'].unique())
 default_t1_idx = get_team_index(global_t1, team_choices, 0) if global_is_live else 0
 default_t2_idx = get_team_index(global_t2, team_choices, 1) if global_is_live else 1
-
-# --- DIRECT API FETCHER FOR STREAMLIT CLOUD ---
-def fetch_direct_live_data():
-    """Bypasses the JSON file and calls RapidAPI directly when running in the cloud."""
-    try:
-        # Securely pull API key: Handle BOTH Cloud (Secrets) and Local (.env)
-        try:
-            key = st.secrets["CRICBUZZ_KEY"]
-        except Exception:
-            from dotenv import load_dotenv
-            load_dotenv('.env')
-            key = os.getenv("CRICBUZZ_KEY")
-            
-        if not key: return {'match_active': False, 'timestamp': 'Error: Missing API Key'}
-        
-        url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live"
-        headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"}
-        response = requests.get(url, headers=headers).json()
-        
-        payload = {'match_active': False, 'todays_matches': [], 'timestamp': time.strftime('%I:%M:%S %p')}
-        
-        for match_type in response.get('typeMatches', []):
-            for series in match_type.get('seriesMatches', []):
-                s_name = series.get('seriesAdWrapper', {}).get('seriesName', '')
-                if 'Indian Premier League' not in s_name and 'IPL' not in s_name: continue
-                
-                for match in series.get('seriesAdWrapper', {}).get('matches', []):
-                    info = match.get('matchInfo', {})
-                    score = match.get('matchScore', {})
-                    state = info.get('state', '')
-                    t1 = info.get('team1', {}).get('teamName', 'TBA')
-                    t2 = info.get('team2', {}).get('teamName', 'TBA')
-                    
-                    payload['todays_matches'].append({
-                        'team1': t1, 'team2': t2, 'status': info.get('status', ''), 
-                        'city': info.get('venueInfo', {}).get('city', ''), 'venue': info.get('venueInfo', {}).get('ground', '')
-                    })
-                    
-                    if state == 'In Progress' and not payload['match_active']:
-                        payload['match_active'] = True
-                        payload['batting_team'] = t2 if 'team2Score' in score else t1
-                        payload['bowling_team'] = t1 if 'team2Score' in score else t2
-                        payload['innings'] = 2 if 'team2Score' in score else 1
-                        
-                        active_score = score.get('team2Score', score.get('team1Score', {})).get('inngs1', {})
-                        payload['cur_score'] = active_score.get('runs', 0)
-                        payload['wickets'] = active_score.get('wickets', 0)
-                        payload['overs'] = float(active_score.get('overs', 0.0))
-                        
-                        balls_bowled = int(payload['overs']) * 6 + int(round((payload['overs'] % 1) * 10))
-                        payload['balls_left'] = 120 - balls_bowled
-                        payload['crr'] = (payload['cur_score'] / max(1, balls_bowled)) * 6
-                        
-                        if payload['innings'] == 2:
-                            payload['target'] = score['team2Score']['inngs1']['target'] if 'target' in score.get('team2Score', {}).get('inngs1', {}) else 180
-                            payload['runs_required'] = max(0, payload['target'] - payload['cur_score'])
-                            payload['rrr'] = (payload['runs_required'] / max(1/6, payload['balls_left'] / 6))
-                            payload['wickets_in_hand'] = 10 - payload['wickets']
-                            
-                            # Run ML Prediction Live
-                            features = pd.DataFrame({'runs_required': [payload['runs_required']], 'balls_left': [payload['balls_left']], 'wickets_in_hand': [payload['wickets_in_hand']], 'crr': [payload['crr']], 'rrr': [payload['rrr']]})
-                            if payload['overs'] <= 5: act_mod, phs = live_pp, "Powerplay"
-                            elif payload['overs'] <= 14: act_mod, phs = live_mid, "Middle Overs"
-                            else: act_mod, phs = live_death, "Death Overs"
-                            
-                            if act_mod:
-                                payload['chasing_win_prob'] = act_mod.predict_proba(features)[0][1]
-                            else:
-                                payload['chasing_win_prob'] = 0.5
-                            payload['current_phase'] = phs
-                        else:
-                            payload['projected_score'] = int(payload['cur_score'] + (payload['crr'] * (payload['balls_left'] / 6)))
-        return payload
-    except Exception as e:
-        return {'match_active': False, 'timestamp': f'Direct API Error: {str(e)}'}
 
 # --- TAB 1: PRE-MATCH ENGINE ---
 def render_pre_match():
@@ -176,113 +106,113 @@ def render_pre_match():
             team2 = st.selectbox("Team 2 (Away/Neutral)", team_choices, index=default_t2_idx)
             toss_dec = st.selectbox("Toss Decision", ["field", "bat"])
 
+    # --- TOSS OPTIMIZER ENGINE ---
     st.divider()
     st.markdown("### 🪙 AI Toss Optimizer")
     st.info("💡 *Analyzing Pitch DNA: Let the AI mathematically determine if the captain should elect to Bat or Bowl first based on historical venue data.*")
     
-    # Session State Fix: Save Button Click
     if st.button("Analyze Pitch DNA for this Venue", use_container_width=True):
-        st.session_state.pitch_dna_clicked = True
+        st.session_state.toss_clicked = True
         
-    if st.session_state.get('pitch_dna_clicked', False):
-        venue_matches = matches_df[matches_df['venue'] == venue]
-        
-        if len(venue_matches) < 5:
-            st.warning(f"Not enough historical data for {venue} to make a confident toss prediction.")
-        else:
-            valid_matches = venue_matches.dropna(subset=['winner']).copy()
-            total_matches = len(valid_matches)
+    if st.session_state.get('toss_clicked', False):
+        with st.spinner("Analyzing historical venue bias..."):
+            venue_matches = matches_df[matches_df['venue'] == venue]
             
-            if total_matches == 0:
-                st.warning("No valid match results found for this venue.")
+            if len(venue_matches) < 5:
+                st.warning(f"Not enough historical data for {venue} to make a confident toss prediction.")
             else:
-                bat_first_wins = len(valid_matches[
-                    ((valid_matches['toss_winner'] == valid_matches['winner']) & (valid_matches['toss_decision'] == 'bat')) |
-                    ((valid_matches['toss_winner'] != valid_matches['winner']) & (valid_matches['toss_decision'] == 'field'))
-                ])
+                valid_matches = venue_matches.dropna(subset=['winner']).copy()
+                total_matches = len(valid_matches)
                 
-                chase_wins = total_matches - bat_first_wins
-                bat_first_pct = (bat_first_wins / total_matches) * 100
-                chase_pct = (chase_wins / total_matches) * 100
-                
-                c1_toss, c2_toss = st.columns(2)
-                c1_toss.metric("Win % (Batting First)", f"{bat_first_pct:.1f}%")
-                c2_toss.metric("Win % (Chasing)", f"{chase_pct:.1f}%")
-                
-                if chase_pct > bat_first_pct + 5:
-                    st.success(f"🔥 **AI RECOMMENDATION: FIELD FIRST**\n\nHistorically, {venue} heavily favors the chasing team ({chase_pct:.1f}% win rate). If the captain wins the toss, they must elect to bowl. Dew likely makes it easier to bat in the 2nd innings.")
-                elif bat_first_pct > chase_pct + 5:
-                    st.success(f"🛡️ **AI RECOMMENDATION: BAT FIRST**\n\nHistorically, {venue} heavily favors the team setting the target ({bat_first_pct:.1f}% win rate). The captain should elect to bat. The pitch likely deteriorates, bringing spinners into the game later.")
+                if total_matches == 0:
+                    st.warning("No valid match results found for this venue.")
                 else:
-                    st.warning(f"⚖️ **NEUTRAL PITCH**\n\n{venue} is a highly balanced ground. The toss decision should be based on team strengths rather than pitch bias.")
+                    bat_first_wins = len(valid_matches[
+                        ((valid_matches['toss_winner'] == valid_matches['winner']) & (valid_matches['toss_decision'] == 'bat')) |
+                        ((valid_matches['toss_winner'] != valid_matches['winner']) & (valid_matches['toss_decision'] == 'field'))
+                    ])
+                    
+                    chase_wins = total_matches - bat_first_wins
+                    bat_first_pct = (bat_first_wins / total_matches) * 100
+                    chase_pct = (chase_wins / total_matches) * 100
+                    
+                    c1_toss, c2_toss = st.columns(2)
+                    c1_toss.metric("Win % (Batting First)", f"{bat_first_pct:.1f}%")
+                    c2_toss.metric("Win % (Chasing)", f"{chase_pct:.1f}%")
+                    
+                    if chase_pct > bat_first_pct + 5:
+                        st.success(f"🔥 **AI RECOMMENDATION: FIELD FIRST**\n\nHistorically, {venue} heavily favors the chasing team ({chase_pct:.1f}% win rate). If the captain wins the toss, they must elect to bowl. Dew likely makes it easier to bat in the 2nd innings.")
+                    elif bat_first_pct > chase_pct + 5:
+                        st.success(f"🛡️ **AI RECOMMENDATION: BAT FIRST**\n\nHistorically, {venue} heavily favors the team setting the target ({bat_first_pct:.1f}% win rate). The captain should elect to bat. The pitch likely deteriorates, bringing spinners into the game later.")
+                    else:
+                        st.warning(f"⚖️ **NEUTRAL PITCH**\n\n{venue} is a highly balanced ground. The toss decision should be based on team strengths rather than pitch bias.")
     st.divider()
 
-    # Session State Fix: Save Button Click
     if st.button("🚀 Run Pre-Match Prediction", use_container_width=True):
-        st.session_state.pre_match_clicked = True
-
-    if st.session_state.get('pre_match_clicked', False):
+        st.session_state.prematch_clicked = True
+        
+    if st.session_state.get('prematch_clicked', False):
         if team1 == team2:
             st.warning("Please select two different teams.")
-        else:
-            t1_form = form_df[form_df['team'] == team1]['rolling_5_form'].iloc[-1]
-            t2_form = form_df[form_df['team'] == team2]['rolling_5_form'].iloc[-1]
-            
-            matchup_str = ' vs '.join(sorted([team1, team2]))
-            dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == team1)]['dominance_score']
-            dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
-            v_dna = venue_df[venue_df['venue'] == venue]['bat_first_win_pct'].iloc[0] if venue in venue_df['venue'].values else 50.0
+            return
 
-            home_stadiums = {'Chennai Super Kings': 'MA Chidambaram Stadium', 'Mumbai Indians': 'Wankhede Stadium', 
-                             'Royal Challengers Bengaluru': 'M Chinnaswamy Stadium', 'Kolkata Knight Riders': 'Eden Gardens',
-                             'Delhi Capitals': 'Arun Jaitley Stadium', 'Rajasthan Royals': 'Sawai Mansingh Stadium',
-                             'Punjab Kings': 'Punjab Cricket Association Stadium, Mohali', 'Sunrisers Hyderabad': 'Rajiv Gandhi International Stadium',
-                             'Gujarat Titans': 'Narendra Modi Stadium', 'Lucknow Super Giants': 'Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium'}
-                             
-            t1_home = 1 if (home_stadiums.get(team1) and home_stadiums.get(team1) in venue) else 0
-            t2_home = 1 if (home_stadiums.get(team2) and home_stadiums.get(team2) in venue) else 0
+        t1_form = form_df[form_df['team'] == team1]['rolling_5_form'].iloc[-1]
+        t2_form = form_df[form_df['team'] == team2]['rolling_5_form'].iloc[-1]
+        
+        matchup_str = ' vs '.join(sorted([team1, team2]))
+        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == team1)]['dominance_score']
+        dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
+        v_dna = venue_df[venue_df['venue'] == venue]['bat_first_win_pct'].iloc[0] if venue in venue_df['venue'].values else 50.0
 
-            input_data = pd.DataFrame({
-                'team1': [team1], 'team2': [team2], 'venue': [venue], 
-                'toss_decision': [toss_dec], 'venue_bat_first_win_pct': [v_dna],
-                'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
-                'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
-            })
+        home_stadiums = {'Chennai Super Kings': 'MA Chidambaram Stadium', 'Mumbai Indians': 'Wankhede Stadium', 
+                         'Royal Challengers Bengaluru': 'M Chinnaswamy Stadium', 'Kolkata Knight Riders': 'Eden Gardens',
+                         'Delhi Capitals': 'Arun Jaitley Stadium', 'Rajasthan Royals': 'Sawai Mansingh Stadium',
+                         'Punjab Kings': 'Punjab Cricket Association Stadium, Mohali', 'Sunrisers Hyderabad': 'Rajiv Gandhi International Stadium',
+                         'Gujarat Titans': 'Narendra Modi Stadium', 'Lucknow Super Giants': 'Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium'}
+                         
+        t1_home = 1 if (home_stadiums.get(team1) and home_stadiums.get(team1) in venue) else 0
+        t2_home = 1 if (home_stadiums.get(team2) and home_stadiums.get(team2) in venue) else 0
 
-            input_transformed = preprocessor.transform(input_data)
-            probs = model.predict_proba(input_transformed)[0]
+        input_data = pd.DataFrame({
+            'team1': [team1], 'team2': [team2], 'venue': [venue], 
+            'toss_decision': [toss_dec], 'venue_bat_first_win_pct': [v_dna],
+            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
+            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+        })
 
-            st.divider()
-            res_col1, res_col2 = st.columns([1, 1])
-            with res_col1:
-                st.metric(f"{team1} Win %", f"{probs[1]*100:.1f}%")
-                st.progress(probs[1])
-                st.metric(f"{team2} Win %", f"{probs[0]*100:.1f}%")
-                st.progress(probs[0])
-            with res_col2:
-                prob_fig = px.pie(values=[probs[1], probs[0]], names=[team1, team2], hole=0.4, color_discrete_sequence=['#2E86C1', '#E74C3C'])
-                st.plotly_chart(prob_fig, use_container_width=True)
+        input_transformed = preprocessor.transform(input_data)
+        probs = model.predict_proba(input_transformed)[0]
 
-# --- TAB 2: LIVE MATCH ENGINE ---
+        st.divider()
+        res_col1, res_col2 = st.columns([1, 1])
+        with res_col1:
+            st.metric(f"{team1} Win %", f"{probs[1]*100:.1f}%")
+            st.progress(probs[1])
+            st.metric(f"{team2} Win %", f"{probs[0]*100:.1f}%")
+            st.progress(probs[0])
+        with res_col2:
+            prob_fig = px.pie(values=[probs[1], probs[0]], names=[team1, team2], hole=0.4, color_discrete_sequence=['#2E86C1', '#E74C3C'])
+            st.plotly_chart(prob_fig, use_container_width=True)
+
+# --- TAB 2: LIVE MATCH ENGINE & DAILY HUB ---
 def render_live_match():
     st.title("⚡ Autonomous Live Match Engine")
     
-    auto_on = st.toggle("🔄 Enable Live Auto-Refresh", value=False, help="Turn this ON to watch the live match update in real-time without reloading the page.")
+    auto_on = st.toggle("🔄 Enable Live Auto-Refresh", value=False, help="Turn this on to watch the live match update in real-time. Turn it OFF when using the Fantasy or Pre-Match tabs.")
     
     if auto_on:
-        # Changed to 60000ms (1 Minute) to protect your 200 API calls!
-        st_autorefresh(interval=60000, key="live_match_updater")
-        live_data = fetch_direct_live_data() # DIRECT CLOUD FETCH
-    else:
-        try:
-            with open(live_state_file, 'r') as f:
-                live_data = json.load(f)
-        except:
-            live_data = {}
-            
-    # --- DAILY MATCH HUB ---
+        # 5 seconds is safe now because Firebase handles the heavy lifting!
+        st_autorefresh(interval=5000, key="live_match_updater")
+        
+    # Always read from Firebase!
+    live_data = fetch_firebase_live_data()
+        
+    # --- DAILY MATCH HUB (Empty State) ---
     if not live_data.get('match_active'):
         st.info(f"⏸️ No live match at the moment. Last Synced: {live_data.get('timestamp', 'Unknown')}")
+        if 'message' in live_data:
+            st.warning(f"System Message: {live_data['message']}")
+            
         st.markdown("### 📅 Today's IPL Match Hub")
         
         todays_matches = live_data.get('todays_matches', [])
@@ -294,59 +224,83 @@ def render_live_match():
                 with cols[idx % 3]:
                     st.markdown(f"""
                     <div style="background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
-                        <h4 style="text-align: center; color: #3498DB; margin: 0;">{match['team1']}</h4>
+                        <h4 style="text-align: center; color: #3498DB; margin: 0;">{match.get('team1', 'TBA')}</h4>
                         <h5 style="text-align: center; color: #ffffff; margin: 5px 0;">vs</h5>
-                        <h4 style="text-align: center; color: #E74C3C; margin: 0;">{match['team2']}</h4>
+                        <h4 style="text-align: center; color: #E74C3C; margin: 0;">{match.get('team2', 'TBA')}</h4>
                         <hr style="border-color: #30363d; margin: 10px 0;">
-                        <p style="text-align: center; margin: 0; font-size: 14px; color: #cccccc;">📍 {match.get('venue', 'Unknown Venue')}, {match['city']}</p>
-                        <p style="text-align: center; margin: 5px 0 0 0; color: #F1C40F;"><strong>{match['status']}</strong></p>
+                        <p style="text-align: center; margin: 0; font-size: 14px; color: #cccccc;">📍 {match.get('venue', 'Unknown Venue')}, {match.get('city', '')}</p>
+                        <p style="text-align: center; margin: 5px 0 0 0; color: #F1C40F;"><strong>{match.get('status', 'Scheduled')}</strong></p>
                     </div>
                     """, unsafe_allow_html=True)
         return
         
     # --- ACTIVE MATCH UI ---
     st.success(f"🔴 LIVE DATA SYNCED | Last Updated: {live_data.get('timestamp', 'Unknown')}")
+    
+    # --- WEATHER SATELLITE UI ---
+    weather = live_data.get('weather')
+    city = live_data.get('city', 'Unknown Location')
+    if weather:
+        dew_status = "🚨 HIGH (Advantage Chasing Team)" if weather.get('dew_warning') else "🟢 LOW"
+        st.markdown(f"📍 **{city}** &nbsp;|&nbsp; 🌡️ **{weather['temp']}°C** &nbsp;|&nbsp; 💧 **Humidity: {weather['humidity']}%** &nbsp;|&nbsp; 🏏 **Dew Factor: {dew_status}**")
+        if weather.get('dew_warning'):
+            st.info("💡 *Dew Warning Active: The AI has artificially boosted the chasing team's win probability by 3% due to wet outfield conditions.*")
+            
+    # --- AI COMMENTARY DESK ---
+    if live_data.get('ai_commentary'):
+        st.info(f"🎙️ **AI Commentary Desk:** \"{live_data['ai_commentary']}\"")
     st.divider()
     
     innings = live_data.get('innings', 2)
     
+    # --- 1ST INNINGS UI ---
     if innings == 1:
         st.info("🟡 1st Innings in Progress | AI Win Probability Engine activates during the run-chase.")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Batting Team", live_data['batting_team'])
-            st.metric("Current Score", f"{live_data['cur_score']} / {live_data['wickets']}")
+            st.metric("Batting Team", live_data.get('batting_team', 'Unknown'))
+            st.metric("Current Score", f"{live_data.get('cur_score', 0)} / {live_data.get('wickets', 0)}")
         with col2:
-            st.metric("Bowling Team", live_data['bowling_team'])
+            st.metric("Bowling Team", live_data.get('bowling_team', 'Unknown'))
             st.metric("Projected Target", live_data.get('projected_score', 'Calculating...'))
         with col3:
-            st.metric("Overs Completed", f"{live_data['overs']:.1f}")
-            st.metric("Current Run Rate (CRR)", f"{live_data['crr']:.2f}")
+            st.metric("Overs Completed", f"{live_data.get('overs', 0):.1f}")
+            st.metric("Current Run Rate (CRR)", f"{live_data.get('crr', 0):.2f}")
 
+    # --- 2ND INNINGS UI ---
     else:
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Chasing Team", live_data['batting_team'])
-            st.metric("Current Score", f"{live_data['cur_score']} / {live_data['wickets']}")
+            st.metric("Chasing Team", live_data.get('batting_team', 'Unknown'))
+            st.metric("Current Score", f"{live_data.get('cur_score', 0)} / {live_data.get('wickets', 0)}")
         with col2:
-            st.metric("Defending Team", live_data['bowling_team'])
-            st.metric("Target Score", live_data['target'])
+            st.metric("Defending Team", live_data.get('bowling_team', 'Unknown'))
+            st.metric("Target Score", live_data.get('target', 0))
         with col3:
-            st.metric("Overs Completed", f"{live_data['overs']:.1f}")
+            st.metric("Overs Completed", f"{live_data.get('overs', 0):.1f}")
             st.metric("Phase Active", live_data.get('current_phase', 'In Progress'))
             
         st.divider()
-        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-        metric_col1.metric("Runs Required", live_data['runs_required'])
-        metric_col2.metric("Balls Left", live_data['balls_left'])
-        metric_col3.metric("CRR", f"{live_data['crr']:.2f}")
+        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+        metric_col1.metric("Runs Required", live_data.get('runs_required', 0))
+        metric_col2.metric("Balls Left", live_data.get('balls_left', 0))
+        metric_col3.metric("CRR", f"{live_data.get('crr', 0):.2f}")
         metric_col4.metric("RRR", f"{live_data.get('rrr', 0):.2f}")
+        
+        r_18 = live_data.get('runs_last_18', 0)
+        w_18 = live_data.get('wickets_last_18', 0)
+        metric_col5.metric("Momentum (Last 3 Ov)", f"{r_18} R / {w_18} W")
+        
+        if w_18 >= 2:
+            st.error("📉 Collapse Detected: The AI has penalized the chasing team due to recent quick wickets.")
+        elif r_18 >= 32:
+            st.success("🔥 Surge Detected: The AI has boosted the chasing team due to high recent scoring.")
         
         chasing_win_prob = live_data.get('chasing_win_prob', 0)
         fig = go.Figure(go.Indicator(
             mode = "gauge+number",
             value = chasing_win_prob * 100,
-            title = {'text': f"{live_data['batting_team']} Win Probability"},
+            title = {'text': f"{live_data.get('batting_team', 'Chasing Team')} Win Probability"},
             gauge = {
                 'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "white"},
                 'bar': {'color': "#2E86C1"},
@@ -373,6 +327,7 @@ def render_player_intel():
     def find_player_index(live_name, player_list, default_name):
         if not live_name or live_name == "Unknown":
             return player_list.index(default_name) if default_name in player_list else 0
+            
         live_parts = live_name.lower().split()
         for i, p in enumerate(player_list):
             p_lower = p.lower()
@@ -385,20 +340,26 @@ def render_player_intel():
     
     col1, col2 = st.columns(2)
     with col1:
+        if global_is_live and global_striker != "Unknown":
+            st.caption(f"🔴 Live Sync: Auto-selected {global_striker}")
         selected_batter = st.selectbox("🏏 Select Batter", all_batters, index=default_bat)
     with col2:
+        if global_is_live and global_current_bowler != "Unknown":
+            st.caption(f"🔴 Live Sync: Auto-selected {global_current_bowler}")
         selected_bowler = st.selectbox("🎯 Select Bowler", all_bowlers, index=default_bowl)
         
-    # Session State Fix: Save Button Click
     if st.button("Calculate Matchup", use_container_width=True):
         st.session_state.matchup_clicked = True
         
     if st.session_state.get('matchup_clicked', False):
-        matchup_df = deliveries_df[(deliveries_df[batter_col] == selected_batter) & (deliveries_df['bowler'] == selected_bowler)]
+        with st.spinner("Analyzing ball-by-ball history..."):
+            matchup_df = deliveries_df[(deliveries_df[batter_col] == selected_batter) & 
+                                       (deliveries_df['bowler'] == selected_bowler)]
                                        
-        if matchup_df.empty:
-            st.warning(f"No historical data found for {selected_batter} vs {selected_bowler}.")
-        else:
+            if matchup_df.empty:
+                st.warning(f"No historical data found for {selected_batter} vs {selected_bowler}.")
+                return
+                
             runs_scored = int(matchup_df['batsman_runs'].sum())
             balls_faced = len(matchup_df)
             
@@ -492,8 +453,8 @@ def render_team_intel():
                 rivalry_df['Opponent'] = rivalry_df.apply(lambda x: get_opponent(x['matchup'], team_query), axis=1)
                 rivalry_df = rivalry_df.sort_values('dominance_score', ascending=True)
                 fig_dom = px.bar(rivalry_df, x='dominance_score', y='Opponent', orientation='h',
-                                 text=rivalry_df['dominance_score'].apply(lambda x: f"{x*100:.1f}%"),
-                                 color='dominance_score', color_continuous_scale='Blues')
+                text=rivalry_df['dominance_score'].apply(lambda x: f"{x*100:.1f}%"),
+                color='dominance_score', color_continuous_scale='Blues')
                 fig_dom.update_layout(showlegend=False, paper_bgcolor="rgba(0,0,0,0)", font=dict(color='white'), xaxis_title="Historical Win Rate")
                 st.plotly_chart(fig_dom, use_container_width=True)
 
@@ -543,6 +504,7 @@ def render_venue_intel():
             fig_win.update_layout(showlegend=False, paper_bgcolor="rgba(0,0,0,0)", font=dict(color='white'), yaxis_title="Historical Win %")
             st.plotly_chart(fig_win, use_container_width=True)
 
+
 # --- TAB 6: FANTASY CRICKET ASSISTANT (PRO VERSION) ---
 def render_fantasy_assistant():
     st.title("💸 Dream11 Fantasy XI Optimizer (Pro)")
@@ -555,123 +517,137 @@ def render_fantasy_assistant():
     with col2:
         team2 = st.selectbox("Select Team 2", team_choices, index=default_t2_idx, key='fant_t2')
         
-    # Session State Fix: Save Button Click
     if st.button("🔮 Generate Optimal Playing XI", use_container_width=True):
         st.session_state.fantasy_clicked = True
         
     if st.session_state.get('fantasy_clicked', False):
         if team1 == team2:
             st.warning("Please select two different teams.")
-        else:
-            with st.spinner("Crunching historical data and weighting recent form..."):
-                team_mapping = {
-                    'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
-                    'Deccan Chargers': 'Sunrisers Hyderabad', 'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 
-                    'Gujarat Lions': 'Gujarat Titans'
-                }
-                working_matches = matches_df.copy()
-                working_matches.replace(team_mapping, inplace=True)
+            return
+            
+        with st.spinner("Crunching historical data and weighting recent form..."):
+            team_mapping = {
+                'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
+                'Deccan Chargers': 'Sunrisers Hyderabad', 'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 
+                'Gujarat Lions': 'Gujarat Titans'
+            }
+            working_matches = matches_df.copy()
+            working_matches.replace(team_mapping, inplace=True)
+            
+            # Find matches between these two teams
+            match_subset = working_matches[((working_matches['team1'] == team1) & (working_matches['team2'] == team2)) | 
+                                           ((working_matches['team1'] == team2) & (working_matches['team2'] == team1))].copy()
+            
+            if match_subset.empty:
+                st.warning("No historical match data found between these two teams.")
+                return
                 
-                match_subset = working_matches[((working_matches['team1'] == team1) & (working_matches['team2'] == team2)) | 
-                                               ((working_matches['team1'] == team2) & (working_matches['team2'] == team1))].copy()
+            # Determine "Recent" seasons for the weight multiplier
+            if pd.api.types.is_numeric_dtype(match_subset['season']):
+                recent_cutoff = match_subset['season'].max() - 2
+                match_subset['weight'] = match_subset['season'].apply(lambda x: 1.5 if x >= recent_cutoff else 1.0)
+            else:
+                match_subset['weight'] = 1.0 # Fallback
                 
-                if match_subset.empty:
-                    st.warning("No historical match data found between these two teams.")
-                else:
-                    if pd.api.types.is_numeric_dtype(match_subset['season']):
-                        recent_cutoff = match_subset['season'].max() - 2
-                        match_subset['weight'] = match_subset['season'].apply(lambda x: 1.5 if x >= recent_cutoff else 1.0)
-                    else:
-                        match_subset['weight'] = 1.0 
-                        
-                    dels = deliveries_df[deliveries_df['match_id'].isin(match_subset['id'])].copy()
-                    dels = dels.merge(match_subset[['id', 'weight']], left_on='match_id', right_on='id', how='left')
-                    
-                    batter_col = 'batter' if 'batter' in dels.columns else 'batsman'
-                    
-                    dels['bat_pts'] = (dels['batsman_runs'] + 
-                                       (dels['batsman_runs'] == 4).astype(int) + 
-                                       ((dels['batsman_runs'] == 6).astype(int) * 2)) * dels['weight']
-                                       
-                    bat_stats = dels.groupby(batter_col).agg(
-                        balls_faced=('match_id', 'count'),
-                        batting_pts=('bat_pts', 'sum')
-                    ).reset_index().rename(columns={batter_col: 'Player'})
-                    
-                    if 'is_wicket' not in dels.columns:
-                        dels['is_wicket'] = dels['player_dismissed'].notnull().astype(int)
-                    
-                    valid_dismissals = ['caught', 'bowled', 'lbw', 'stumped', 'caught and bowled']
-                    if 'dismissal_kind' in dels.columns:
-                        bowl_dels = dels[dels['dismissal_kind'].isin(valid_dismissals)].copy()
-                    else:
-                        bowl_dels = dels[dels['is_wicket'] == 1].copy()
-                        
-                    bowl_dels['bowl_pts'] = 25 * bowl_dels['weight']
-                    bowl_stats = bowl_dels.groupby('bowler').agg(
-                        wickets=('is_wicket', 'sum'),
-                        bowling_pts=('bowl_pts', 'sum')
-                    ).reset_index()
-                    
-                    balls_bowled = dels.groupby('bowler').agg(balls_bowled=('match_id', 'count')).reset_index().rename(columns={'bowler': 'Player'})
-                    
-                    fantasy_df = pd.merge(bat_stats, bowl_stats.rename(columns={'bowler': 'Player'}), on='Player', how='outer').fillna(0)
-                    fantasy_df = pd.merge(fantasy_df, balls_bowled, on='Player', how='outer').fillna(0)
-                    fantasy_df['Total_Points'] = fantasy_df['batting_pts'] + fantasy_df['bowling_pts']
-                    fantasy_df = fantasy_df.sort_values(by='Total_Points', ascending=False)
-                    
-                    wk_list = ['MS Dhoni', 'RR Pant', 'SV Samson', 'KL Rahul', 'Q de Kock', 'Ishan Kishan', 'N Pooran', 'JC Buttler', 'PD Salt', 'H Klaasen', 'WP Saha', 'KD Karthik']
-                    
-                    def assign_role(row):
-                        if row['Player'] in wk_list: return 'WK'
-                        if row['balls_bowled'] > 24 and row['balls_faced'] > 24: return 'AR'
-                        if row['balls_bowled'] > 48: return 'BOWL'
-                        return 'BAT'
-                        
-                    fantasy_df['Role'] = fantasy_df.apply(assign_role, axis=1)
-                    
-                    selected_xi = []
-                    
-                    def draft_player(role, required_count):
-                        pool = fantasy_df[(fantasy_df['Role'] == role) & (~fantasy_df['Player'].isin([p['Player'] for p in selected_xi]))]
-                        for _, player in pool.head(required_count).iterrows():
-                            selected_xi.append(player.to_dict())
+            dels = deliveries_df[deliveries_df['match_id'].isin(match_subset['id'])].copy()
+            dels = dels.merge(match_subset[['id', 'weight']], left_on='match_id', right_on='id', how='left')
+            
+            batter_col = 'batter' if 'batter' in dels.columns else 'batsman'
+            
+            # 1. Calculate Weighted Batting Points
+            dels['bat_pts'] = (dels['batsman_runs'] + 
+                               (dels['batsman_runs'] == 4).astype(int) + 
+                               ((dels['batsman_runs'] == 6).astype(int) * 2)) * dels['weight']
+                               
+            bat_stats = dels.groupby(batter_col).agg(
+                balls_faced=('match_id', 'count'),
+                batting_pts=('bat_pts', 'sum')
+            ).reset_index().rename(columns={batter_col: 'Player'})
+            
+            # 2. Calculate Weighted Bowling Points
+            if 'is_wicket' not in dels.columns:
+                dels['is_wicket'] = dels['player_dismissed'].notnull().astype(int)
+            
+            # Filter for bowler wickets only
+            valid_dismissals = ['caught', 'bowled', 'lbw', 'stumped', 'caught and bowled']
+            if 'dismissal_kind' in dels.columns:
+                bowl_dels = dels[dels['dismissal_kind'].isin(valid_dismissals)].copy()
+            else:
+                bowl_dels = dels[dels['is_wicket'] == 1].copy()
+                
+            bowl_dels['bowl_pts'] = 25 * bowl_dels['weight']
+            bowl_stats = bowl_dels.groupby('bowler').agg(
+                wickets=('is_wicket', 'sum'),
+                bowling_pts=('bowl_pts', 'sum')
+            ).reset_index()
+            
+            # Count total balls bowled for role classification
+            balls_bowled = dels.groupby('bowler').agg(balls_bowled=('match_id', 'count')).reset_index().rename(columns={'bowler': 'Player'})
+            
+            # 3. Merge Everything
+            fantasy_df = pd.merge(bat_stats, bowl_stats.rename(columns={'bowler': 'Player'}), on='Player', how='outer').fillna(0)
+            fantasy_df = pd.merge(fantasy_df, balls_bowled, on='Player', how='outer').fillna(0)
+            fantasy_df['Total_Points'] = fantasy_df['batting_pts'] + fantasy_df['bowling_pts']
+            fantasy_df = fantasy_df.sort_values(by='Total_Points', ascending=False)
+            
+            # 4. Role Classification Engine
+            wk_list = ['MS Dhoni', 'RR Pant', 'SV Samson', 'KL Rahul', 'Q de Kock', 'Ishan Kishan', 'N Pooran', 'JC Buttler', 'PD Salt', 'H Klaasen', 'WP Saha', 'KD Karthik']
+            
+            def assign_role(row):
+                if row['Player'] in wk_list: return 'WK'
+                if row['balls_bowled'] > 24 and row['balls_faced'] > 24: return 'AR'
+                if row['balls_bowled'] > 48: return 'BOWL'
+                return 'BAT'
+                
+            fantasy_df['Role'] = fantasy_df.apply(assign_role, axis=1)
+            
+            # 5. Dream11 Selection Algorithm
+            selected_xi = []
+            
+            def draft_player(role, required_count):
+                pool = fantasy_df[(fantasy_df['Role'] == role) & (~fantasy_df['Player'].isin([p['Player'] for p in selected_xi]))]
+                for _, player in pool.head(required_count).iterrows():
+                    selected_xi.append(player.to_dict())
 
-                    draft_player('WK', 1)
-                    draft_player('BAT', 3)
-                    draft_player('AR', 1)
-                    draft_player('BOWL', 3)
-                    
-                    remaining_pool = fantasy_df[~fantasy_df['Player'].isin([p['Player'] for p in selected_xi])]
-                    for _, player in remaining_pool.head(11 - len(selected_xi)).iterrows():
-                        selected_xi.append(player.to_dict())
-                        
-                    final_team_df = pd.DataFrame(selected_xi).sort_values(by='Total_Points', ascending=False).reset_index(drop=True)
-                    
-                    captain = final_team_df.iloc[0]
-                    vice_captain = final_team_df.iloc[1]
-                    
-                    st.divider()
-                    st.subheader("👑 Dream11 Leaders")
-                    c1, c2 = st.columns(2)
-                    c1.success(f"**CAPTAIN (C) - 2x Points:**\n### {captain['Player']} ({captain['Role']})\n*Weighted Form Score: {int(captain['Total_Points'])}*")
-                    c2.info(f"**VICE-CAPTAIN (VC) - 1.5x Points:**\n### {vice_captain['Player']} ({vice_captain['Role']})\n*Weighted Form Score: {int(vice_captain['Total_Points'])}*")
-                    
-                    st.subheader("🏏 Mathematically Optimal Playing XI")
-                    
-                    display_df = final_team_df[['Player', 'Role', 'Total_Points']].copy()
-                    display_df.columns = ['Player Name', 'Role', 'AI Weighted Projection']
-                    display_df['AI Weighted Projection'] = display_df['AI Weighted Projection'].astype(int)
-                    
-                    display_df['Role_Order'] = display_df['Role'].map({'WK': 1, 'BAT': 2, 'AR': 3, 'BOWL': 4})
-                    display_df = display_df.sort_values(by=['Role_Order', 'AI Weighted Projection'], ascending=[True, False]).drop(columns=['Role_Order'])
-                    
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+            draft_player('WK', 1)
+            draft_player('BAT', 3)
+            draft_player('AR', 1)
+            draft_player('BOWL', 3)
+            
+            # Fill remaining spots
+            remaining_pool = fantasy_df[~fantasy_df['Player'].isin([p['Player'] for p in selected_xi])]
+            for _, player in remaining_pool.head(11 - len(selected_xi)).iterrows():
+                selected_xi.append(player.to_dict())
+                
+            # 6. Format and Display Final Team
+            final_team_df = pd.DataFrame(selected_xi).sort_values(by='Total_Points', ascending=False).reset_index(drop=True)
+            
+            captain = final_team_df.iloc[0]
+            vice_captain = final_team_df.iloc[1]
+            
+            st.divider()
+            st.subheader("👑 Dream11 Leaders")
+            c1, c2 = st.columns(2)
+            c1.success(f"**CAPTAIN (C) - 2x Points:**\n### {captain['Player']} ({captain['Role']})\n*Weighted Form Score: {int(captain['Total_Points'])}*")
+            c2.info(f"**VICE-CAPTAIN (VC) - 1.5x Points:**\n### {vice_captain['Player']} ({vice_captain['Role']})\n*Weighted Form Score: {int(vice_captain['Total_Points'])}*")
+            
+            st.subheader("🏏 Mathematically Optimal Playing XI")
+            
+            display_df = final_team_df[['Player', 'Role', 'Total_Points']].copy()
+            display_df.columns = ['Player Name', 'Role', 'AI Weighted Projection']
+            display_df['AI Weighted Projection'] = display_df['AI Weighted Projection'].astype(int)
+            
+            display_df['Role_Order'] = display_df['Role'].map({'WK': 1, 'BAT': 2, 'AR': 3, 'BOWL': 4})
+            display_df = display_df.sort_values(by=['Role_Order', 'AI Weighted Projection'], ascending=[True, False]).drop(columns=['Role_Order'])
+            
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 # --- MAIN APP UI ---
 def main():
+    # --- SAFER UI HACK: ESPORTS / CYBERPUNK VIBE ---
     st.markdown("""
     <style>
+        /* 1. Import futuristic Esports font */
         @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
         
         html, body, [class*="css"] {
@@ -679,6 +655,7 @@ def main():
             letter-spacing: 0.5px;
         }
 
+        /* 2. The Deep Purple Stadium Background */
         .stApp {
             background-image: url("https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=2805&auto=format&fit=crop");
             background-size: cover;
@@ -686,14 +663,17 @@ def main():
             background-attachment: fixed;
         }
         
+        /* Dark overlay to make text readable but keep background visible */
         [data-testid="stAppViewContainer"] {
             background-color: rgba(15, 5, 25, 0.85);
         }
         
+        /* Make header transparent */
         [data-testid="stHeader"] {
             background-color: transparent;
         }
 
+        /* 3. Glowing Neon Gradient Buttons */
         div[data-testid="stButton"] > button {
             background: linear-gradient(90deg, #b026ff 0%, #00d4ff 100%) !important;
             color: white !important;
@@ -714,13 +694,14 @@ def main():
             border: 1px solid white !important;
         }
 
+        /* 4. Neon Accents for Text and Metrics */
         h1, h2, h3 {
             color: #ffffff !important;
             text-shadow: 0 0 10px rgba(255, 255, 255, 0.3) !important;
         }
         
         [data-testid="stMetricValue"] {
-            color: #00d4ff !important; 
+            color: #00d4ff !important; /* Cyan metrics */
             text-shadow: 0 0 8px rgba(0, 212, 255, 0.4) !important;
             font-weight: 700 !important;
         }
