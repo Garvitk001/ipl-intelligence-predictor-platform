@@ -57,11 +57,18 @@ preprocessor, model, shap_explainer, live_pp, live_mid, live_death = load_ml_ass
 form_df, dom_df, venue_df = load_processed_data()
 deliveries_df, matches_df = load_deliveries_data()
 
+home_stadiums = {
+    'Chennai Super Kings': 'MA Chidambaram Stadium', 'Mumbai Indians': 'Wankhede Stadium', 
+    'Royal Challengers Bengaluru': 'M Chinnaswamy Stadium', 'Kolkata Knight Riders': 'Eden Gardens',
+    'Delhi Capitals': 'Arun Jaitley Stadium', 'Rajasthan Royals': 'Sawai Mansingh Stadium',
+    'Punjab Kings': 'Punjab Cricket Association Stadium, Mohali', 'Sunrisers Hyderabad': 'Rajiv Gandhi International Stadium',
+    'Gujarat Titans': 'Narendra Modi Stadium', 'Lucknow Super Giants': 'Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium'
+}
+
 # --- 2. FIREBASE CLOUD DATABASE CONNECTOR ---
 FIREBASE_URL = "https://ipl-intel-db-default-rtdb.firebaseio.com/live_match_state.json"
 
 def fetch_firebase_live_data():
-    """Reads the live match state directly from the Firebase Cloud Database."""
     try:
         response = requests.get(FIREBASE_URL)
         if response.status_code == 200:
@@ -72,7 +79,7 @@ def fetch_firebase_live_data():
     except Exception as e:
         return {'match_active': False, 'timestamp': f'Cloud Connection Error: {str(e)}'}
 
-# Fetch initial state for global dropdown syncing
+# --- GLOBAL SYNC ENGINE ---
 initial_cloud_state = fetch_firebase_live_data()
 global_is_live = initial_cloud_state.get('match_active', False)
 global_t1 = initial_cloud_state.get('batting_team')
@@ -80,8 +87,17 @@ global_t2 = initial_cloud_state.get('bowling_team')
 global_striker = initial_cloud_state.get('striker', 'Unknown')      
 global_current_bowler = initial_cloud_state.get('current_bowler', 'Unknown') 
 
-if global_is_live:
-    st.success(f"🔴 LIVE MATCH DETECTED: **{global_t1}** vs **{global_t2}** — Tabs auto-synced!")
+# ADVANCED SYNC: If no match is live, sync to the UPCOMING match today!
+if not global_is_live and initial_cloud_state.get('todays_matches'):
+    try:
+        upcoming_match = initial_cloud_state['todays_matches'][0]
+        global_t1 = upcoming_match.get('team1')
+        global_t2 = upcoming_match.get('team2')
+        st.info(f"📅 **UPCOMING MATCH:** Auto-synced all tabs to {global_t1} vs {global_t2} for Pre-Match Analysis.")
+    except:
+        pass
+elif global_is_live:
+    st.success(f"🔴 **LIVE MATCH DETECTED:** {global_t1} vs {global_t2} — All tabs auto-synced!")
 
 def get_team_index(team_name, team_list, default_idx=0):
     if team_name in team_list:
@@ -89,8 +105,8 @@ def get_team_index(team_name, team_list, default_idx=0):
     return default_idx
 
 team_choices = sorted(form_df['team'].unique())
-default_t1_idx = get_team_index(global_t1, team_choices, 0) if global_is_live else 0
-default_t2_idx = get_team_index(global_t2, team_choices, 1) if global_is_live else 1
+default_t1_idx = get_team_index(global_t1, team_choices, 0)
+default_t2_idx = get_team_index(global_t2, team_choices, 1)
 
 # --- TAB 1: PRE-MATCH ENGINE ---
 def render_pre_match():
@@ -164,12 +180,6 @@ def render_pre_match():
         dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
         v_dna = venue_df[venue_df['venue'] == venue]['bat_first_win_pct'].iloc[0] if venue in venue_df['venue'].values else 50.0
 
-        home_stadiums = {'Chennai Super Kings': 'MA Chidambaram Stadium', 'Mumbai Indians': 'Wankhede Stadium', 
-                         'Royal Challengers Bengaluru': 'M Chinnaswamy Stadium', 'Kolkata Knight Riders': 'Eden Gardens',
-                         'Delhi Capitals': 'Arun Jaitley Stadium', 'Rajasthan Royals': 'Sawai Mansingh Stadium',
-                         'Punjab Kings': 'Punjab Cricket Association Stadium, Mohali', 'Sunrisers Hyderabad': 'Rajiv Gandhi International Stadium',
-                         'Gujarat Titans': 'Narendra Modi Stadium', 'Lucknow Super Giants': 'Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium'}
-                         
         t1_home = 1 if (home_stadiums.get(team1) and home_stadiums.get(team1) in venue) else 0
         t2_home = 1 if (home_stadiums.get(team2) and home_stadiums.get(team2) in venue) else 0
 
@@ -201,13 +211,11 @@ def render_live_match():
     auto_on = st.toggle("🔄 Enable Live Auto-Refresh", value=False, help="Turn this on to watch the live match update in real-time. Turn it OFF when using the Fantasy or Pre-Match tabs.")
     
     if auto_on:
-        # 5 seconds is safe now because Firebase handles the heavy lifting!
         st_autorefresh(interval=5000, key="live_match_updater")
         
-    # Always read from Firebase!
     live_data = fetch_firebase_live_data()
         
-    # --- DAILY MATCH HUB (Empty State) ---
+    # --- SMART DAILY MATCH HUB ---
     if not live_data.get('match_active'):
         st.info(f"⏸️ No live match at the moment. Last Synced: {live_data.get('timestamp', 'Unknown')}")
         if 'message' in live_data:
@@ -222,14 +230,59 @@ def render_live_match():
             cols = st.columns(len(todays_matches) if len(todays_matches) < 3 else 3)
             for idx, match in enumerate(todays_matches):
                 with cols[idx % 3]:
+                    t1_name = match.get('team1', 'TBA')
+                    t2_name = match.get('team2', 'TBA')
+                    v_name = match.get('venue', 'Unknown Venue')
+                    
+                    # --- AI PRE-MATCH CALCULATION ON THE FLY ---
+                    win_prob_html = ""
+                    try:
+                        t1_form = form_df[form_df['team'] == t1_name]['rolling_5_form'].iloc[-1]
+                        t2_form = form_df[form_df['team'] == t2_name]['rolling_5_form'].iloc[-1]
+                        
+                        matchup_str = ' vs '.join(sorted([t1_name, t2_name]))
+                        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_name)]['dominance_score']
+                        dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
+                        v_dna = venue_df[venue_df['venue'] == v_name]['bat_first_win_pct'].iloc[0] if v_name in venue_df['venue'].values else 50.0
+
+                        t1_home = 1 if (home_stadiums.get(t1_name) and home_stadiums.get(t1_name) in v_name) else 0
+                        t2_home = 1 if (home_stadiums.get(t2_name) and home_stadiums.get(t2_name) in v_name) else 0
+
+                        input_data = pd.DataFrame({
+                            'team1': [t1_name], 'team2': [t2_name], 'venue': [v_name], 
+                            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
+                            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
+                            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+                        })
+
+                        input_transformed = preprocessor.transform(input_data)
+                        probs = model.predict_proba(input_transformed)[0]
+                        prob_t1 = probs[1] * 100
+                        prob_t2 = probs[0] * 100
+                        
+                        w# FIX: Removed indentation spaces so Streamlit doesn't think it's a code block!
+                        win_prob_html = f"""<div style="background-color: #0e1117; padding: 10px; border-radius: 5px; margin-top: 10px;">
+<p style="text-align: center; margin: 0; font-size: 12px; color: #aaaaaa;">AI Win Probability Forecast</p>
+<div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px; font-weight: bold;">
+<span style="color: #3498DB;">{prob_t1:.1f}%</span>
+<span style="color: #E74C3C;">{prob_t2:.1f}%</span>
+</div>
+<div style="width: 100%; background-color: #E74C3C; height: 6px; border-radius: 3px; margin-top: 5px; overflow: hidden;">
+<div style="width: {prob_t1}%; background-color: #3498DB; height: 100%;"></div>
+</div>
+</div>"""
+                    except Exception as e:
+                        pass # Silently skip AI prediction if team data isn't in DB yet
+                        
                     st.markdown(f"""
                     <div style="background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
-                        <h4 style="text-align: center; color: #3498DB; margin: 0;">{match.get('team1', 'TBA')}</h4>
+                        <h4 style="text-align: center; color: #3498DB; margin: 0;">{t1_name}</h4>
                         <h5 style="text-align: center; color: #ffffff; margin: 5px 0;">vs</h5>
-                        <h4 style="text-align: center; color: #E74C3C; margin: 0;">{match.get('team2', 'TBA')}</h4>
+                        <h4 style="text-align: center; color: #E74C3C; margin: 0;">{t2_name}</h4>
                         <hr style="border-color: #30363d; margin: 10px 0;">
-                        <p style="text-align: center; margin: 0; font-size: 14px; color: #cccccc;">📍 {match.get('venue', 'Unknown Venue')}, {match.get('city', '')}</p>
-                        <p style="text-align: center; margin: 5px 0 0 0; color: #F1C40F;"><strong>{match.get('status', 'Scheduled')}</strong></p>
+                        <p style="text-align: center; margin: 0; font-size: 14px; color: #cccccc;">📍 {v_name}, {match.get('city', '')}</p>
+                        <p style="text-align: center; margin: 5px 0 0 0; color: #F1C40F;"><strong>⏰ {match.get('status', 'Scheduled')}</strong></p>
+                        {win_prob_html}
                     </div>
                     """, unsafe_allow_html=True)
         return
@@ -237,7 +290,6 @@ def render_live_match():
     # --- ACTIVE MATCH UI ---
     st.success(f"🔴 LIVE DATA SYNCED | Last Updated: {live_data.get('timestamp', 'Unknown')}")
     
-    # --- WEATHER SATELLITE UI ---
     weather = live_data.get('weather')
     city = live_data.get('city', 'Unknown Location')
     if weather:
@@ -246,14 +298,12 @@ def render_live_match():
         if weather.get('dew_warning'):
             st.info("💡 *Dew Warning Active: The AI has artificially boosted the chasing team's win probability by 3% due to wet outfield conditions.*")
             
-    # --- AI COMMENTARY DESK ---
     if live_data.get('ai_commentary'):
         st.info(f"🎙️ **AI Commentary Desk:** \"{live_data['ai_commentary']}\"")
     st.divider()
     
     innings = live_data.get('innings', 2)
     
-    # --- 1ST INNINGS UI ---
     if innings == 1:
         st.info("🟡 1st Innings in Progress | AI Win Probability Engine activates during the run-chase.")
         col1, col2, col3 = st.columns(3)
@@ -267,7 +317,6 @@ def render_live_match():
             st.metric("Overs Completed", f"{live_data.get('overs', 0):.1f}")
             st.metric("Current Run Rate (CRR)", f"{live_data.get('crr', 0):.2f}")
 
-    # --- 2ND INNINGS UI ---
     else:
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -534,7 +583,6 @@ def render_fantasy_assistant():
             working_matches = matches_df.copy()
             working_matches.replace(team_mapping, inplace=True)
             
-            # Find matches between these two teams
             match_subset = working_matches[((working_matches['team1'] == team1) & (working_matches['team2'] == team2)) | 
                                            ((working_matches['team1'] == team2) & (working_matches['team2'] == team1))].copy()
             
@@ -542,19 +590,17 @@ def render_fantasy_assistant():
                 st.warning("No historical match data found between these two teams.")
                 return
                 
-            # Determine "Recent" seasons for the weight multiplier
             if pd.api.types.is_numeric_dtype(match_subset['season']):
                 recent_cutoff = match_subset['season'].max() - 2
                 match_subset['weight'] = match_subset['season'].apply(lambda x: 1.5 if x >= recent_cutoff else 1.0)
             else:
-                match_subset['weight'] = 1.0 # Fallback
+                match_subset['weight'] = 1.0 
                 
             dels = deliveries_df[deliveries_df['match_id'].isin(match_subset['id'])].copy()
             dels = dels.merge(match_subset[['id', 'weight']], left_on='match_id', right_on='id', how='left')
             
             batter_col = 'batter' if 'batter' in dels.columns else 'batsman'
             
-            # 1. Calculate Weighted Batting Points
             dels['bat_pts'] = (dels['batsman_runs'] + 
                                (dels['batsman_runs'] == 4).astype(int) + 
                                ((dels['batsman_runs'] == 6).astype(int) * 2)) * dels['weight']
@@ -564,11 +610,9 @@ def render_fantasy_assistant():
                 batting_pts=('bat_pts', 'sum')
             ).reset_index().rename(columns={batter_col: 'Player'})
             
-            # 2. Calculate Weighted Bowling Points
             if 'is_wicket' not in dels.columns:
                 dels['is_wicket'] = dels['player_dismissed'].notnull().astype(int)
             
-            # Filter for bowler wickets only
             valid_dismissals = ['caught', 'bowled', 'lbw', 'stumped', 'caught and bowled']
             if 'dismissal_kind' in dels.columns:
                 bowl_dels = dels[dels['dismissal_kind'].isin(valid_dismissals)].copy()
@@ -581,16 +625,13 @@ def render_fantasy_assistant():
                 bowling_pts=('bowl_pts', 'sum')
             ).reset_index()
             
-            # Count total balls bowled for role classification
             balls_bowled = dels.groupby('bowler').agg(balls_bowled=('match_id', 'count')).reset_index().rename(columns={'bowler': 'Player'})
             
-            # 3. Merge Everything
             fantasy_df = pd.merge(bat_stats, bowl_stats.rename(columns={'bowler': 'Player'}), on='Player', how='outer').fillna(0)
             fantasy_df = pd.merge(fantasy_df, balls_bowled, on='Player', how='outer').fillna(0)
             fantasy_df['Total_Points'] = fantasy_df['batting_pts'] + fantasy_df['bowling_pts']
             fantasy_df = fantasy_df.sort_values(by='Total_Points', ascending=False)
             
-            # 4. Role Classification Engine
             wk_list = ['MS Dhoni', 'RR Pant', 'SV Samson', 'KL Rahul', 'Q de Kock', 'Ishan Kishan', 'N Pooran', 'JC Buttler', 'PD Salt', 'H Klaasen', 'WP Saha', 'KD Karthik']
             
             def assign_role(row):
@@ -601,7 +642,6 @@ def render_fantasy_assistant():
                 
             fantasy_df['Role'] = fantasy_df.apply(assign_role, axis=1)
             
-            # 5. Dream11 Selection Algorithm
             selected_xi = []
             
             def draft_player(role, required_count):
@@ -614,12 +654,10 @@ def render_fantasy_assistant():
             draft_player('AR', 1)
             draft_player('BOWL', 3)
             
-            # Fill remaining spots
             remaining_pool = fantasy_df[~fantasy_df['Player'].isin([p['Player'] for p in selected_xi])]
             for _, player in remaining_pool.head(11 - len(selected_xi)).iterrows():
                 selected_xi.append(player.to_dict())
                 
-            # 6. Format and Display Final Team
             final_team_df = pd.DataFrame(selected_xi).sort_values(by='Total_Points', ascending=False).reset_index(drop=True)
             
             captain = final_team_df.iloc[0]
@@ -644,10 +682,8 @@ def render_fantasy_assistant():
 
 # --- MAIN APP UI ---
 def main():
-    # --- SAFER UI HACK: ESPORTS / CYBERPUNK VIBE ---
     st.markdown("""
     <style>
-        /* 1. Import futuristic Esports font */
         @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
         
         html, body, [class*="css"] {
@@ -655,7 +691,6 @@ def main():
             letter-spacing: 0.5px;
         }
 
-        /* 2. The Deep Purple Stadium Background */
         .stApp {
             background-image: url("https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=2805&auto=format&fit=crop");
             background-size: cover;
@@ -663,17 +698,14 @@ def main():
             background-attachment: fixed;
         }
         
-        /* Dark overlay to make text readable but keep background visible */
         [data-testid="stAppViewContainer"] {
             background-color: rgba(15, 5, 25, 0.85);
         }
         
-        /* Make header transparent */
         [data-testid="stHeader"] {
             background-color: transparent;
         }
 
-        /* 3. Glowing Neon Gradient Buttons */
         div[data-testid="stButton"] > button {
             background: linear-gradient(90deg, #b026ff 0%, #00d4ff 100%) !important;
             color: white !important;
@@ -694,14 +726,13 @@ def main():
             border: 1px solid white !important;
         }
 
-        /* 4. Neon Accents for Text and Metrics */
         h1, h2, h3 {
             color: #ffffff !important;
             text-shadow: 0 0 10px rgba(255, 255, 255, 0.3) !important;
         }
         
         [data-testid="stMetricValue"] {
-            color: #00d4ff !important; /* Cyan metrics */
+            color: #00d4ff !important; 
             text-shadow: 0 0 8px rgba(0, 212, 255, 0.4) !important;
             font-weight: 700 !important;
         }

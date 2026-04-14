@@ -464,8 +464,22 @@ def run_worker():
             # =========================================================
             # ☁️ FIREBASE CLOUD SYNC (RUNS EVERY TIME)
             # =========================================================
+            # +++ UPDATED FORCED TEST WITH SCHEDULE +++
             if not live_data:
-                live_data = {'match_active': False, 'message': 'API Quota Empty - Forced Test!', 'timestamp': time.strftime('%I:%M:%S %p')}
+                live_data = {
+                    'match_active': False, 
+                    'message': 'API Quota Empty - Forced Test!', 
+                    'timestamp': time.strftime('%I:%M:%S %p'),
+                    'todays_matches': [
+                        {
+                            'team1': 'Chennai Super Kings',
+                            'team2': 'Kolkata Knight Riders',
+                            'venue': 'MA Chidambaram Stadium',
+                            'city': 'Chennai',
+                            'status': 'Match starts at 07:30 PM'
+                        }
+                    ]
+                }
 
             if live_data:
                 live_data['timestamp'] = time.strftime('%I:%M:%S %p')

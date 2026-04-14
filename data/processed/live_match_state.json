@@ -2,94 +2,50 @@
     "match_active": false,
     "todays_matches": [
         {
-            "team1": "Lucknow Super Giants",
-            "team2": "Gujarat Titans",
-            "state": "Complete",
-            "status": "Gujarat Titans won by 7 wkts",
-            "city": "Lucknow",
-            "venue": "Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium",
+            "team1": "Sunrisers Hyderabad",
+            "team2": "Rajasthan Royals",
+            "state": "Innings Break",
+            "status": "Innings Break",
+            "city": "Hyderabad",
+            "venue": "Rajiv Gandhi International Stadium",
             "match_info": {
-                "matchId": 149801,
+                "matchId": 151752,
                 "seriesId": 9241,
                 "seriesName": "Indian Premier League 2026",
-                "matchDesc": "19th Match",
+                "matchDesc": "21st Match",
                 "matchFormat": "T20",
-                "startDate": "1775988000000",
-                "endDate": "1776000600000",
-                "state": "Complete",
-                "status": "Gujarat Titans won by 7 wkts",
+                "startDate": "1776088800000",
+                "endDate": "1776101400000",
+                "state": "Innings Break",
+                "status": "Innings Break",
                 "team1": {
-                    "teamId": 966,
-                    "teamName": "Lucknow Super Giants",
-                    "teamSName": "LSG",
-                    "imageId": 882545
+                    "teamId": 255,
+                    "teamName": "Sunrisers Hyderabad",
+                    "teamSName": "SRH",
+                    "imageId": 860066
                 },
                 "team2": {
-                    "teamId": 971,
-                    "teamName": "Gujarat Titans",
-                    "teamSName": "GT",
-                    "imageId": 860068
+                    "teamId": 64,
+                    "teamName": "Rajasthan Royals",
+                    "teamSName": "RR",
+                    "imageId": 860055
                 },
                 "venueInfo": {
-                    "id": 485,
-                    "ground": "Bharat Ratna Shri Atal Bihari Vajpayee Ekana Cricket Stadium",
-                    "city": "Lucknow",
+                    "id": 80,
+                    "ground": "Rajiv Gandhi International Stadium",
+                    "city": "Hyderabad",
                     "timezone": "+05:30",
-                    "latitude": "26.846694",
-                    "longitude": "80.946166"
+                    "latitude": "17.406495",
+                    "longitude": "78.550451"
                 },
-                "currBatTeamId": 971,
+                "currBatTeamId": 255,
                 "seriesStartDt": "1774656000000",
                 "seriesEndDt": "1780358400000",
                 "isTimeAnnounced": true,
-                "stateTitle": "Complete",
-                "isFantasyEnabled": true
-            }
-        },
-        {
-            "team1": "Royal Challengers Bengaluru",
-            "team2": "Mumbai Indians",
-            "state": "Toss",
-            "status": "Mumbai Indians opt to bowl",
-            "city": "Mumbai",
-            "venue": "Wankhede Stadium",
-            "match_info": {
-                "matchId": 149812,
-                "seriesId": 9241,
-                "seriesName": "Indian Premier League 2026",
-                "matchDesc": "20th Match",
-                "matchFormat": "T20",
-                "startDate": "1776002400000",
-                "endDate": "1776015000000",
-                "state": "Toss",
-                "status": "Mumbai Indians opt to bowl",
-                "team1": {
-                    "teamId": 59,
-                    "teamName": "Royal Challengers Bengaluru",
-                    "teamSName": "RCB",
-                    "imageId": 860056
-                },
-                "team2": {
-                    "teamId": 62,
-                    "teamName": "Mumbai Indians",
-                    "teamSName": "MI",
-                    "imageId": 860053
-                },
-                "venueInfo": {
-                    "id": 81,
-                    "ground": "Wankhede Stadium",
-                    "city": "Mumbai",
-                    "timezone": "+05:30",
-                    "latitude": "18.938956",
-                    "longitude": "72.825719"
-                },
-                "seriesStartDt": "1774656000000",
-                "seriesEndDt": "1780358400000",
-                "isTimeAnnounced": true,
-                "stateTitle": "Toss",
+                "stateTitle": "Ings Break",
                 "isFantasyEnabled": true
             }
         }
     ],
-    "timestamp": "07:07:33 PM"
+    "timestamp": "09:27:26 PM"
 }

@@ -3,14 +3,22 @@ import pandas as pd
 import os
 import time
 import re
+from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-CRICBUZZ_KEY = "GEMINI_API_KEY" # Put your key here!
+# Safely load the key from your local .env file!
+load_dotenv('.env')
+CRICBUZZ_KEY = os.getenv("CRICBUZZ_KEY") 
 API_HOST = "cricbuzz-cricket.p.rapidapi.com"
-MATCHES_CSV_PATH = '../data/raw/matches_current_season.csv'
+# Fixed path so it saves inside your project folder
+MATCHES_CSV_PATH = 'data/raw/matches_current_season.csv'
 
 def run_backfill():
     print("🚀 Starting Advanced IPL 2026 Historical Backfill...")
+    if not CRICBUZZ_KEY:
+        print("❌ Error: Could not find CRICBUZZ_KEY in .env file!")
+        return
+
     url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent"
     headers = {"X-RapidAPI-Key": CRICBUZZ_KEY, "X-RapidAPI-Host": API_HOST}
 
@@ -57,13 +65,13 @@ def run_backfill():
                             elif team2 in status: winner = team2
                             
                             missed_matches.append({
-                                'id': match_id,  # Changed to 'id' to match original dataset
-                                'season': '2026', # Hardcoded for this year
+                                'id': match_id,  
+                                'season': '2026', 
                                 'date': time.strftime('%Y-%m-%d', time.localtime(int(match_info.get('matchEndTimestamp', time.time()*1000))/1000)),
                                 'team1': team1,
                                 'team2': team2,
                                 'toss_winner': toss_winner,
-                                'toss_decision': toss_decision.lower(), # 'bat' or 'field'
+                                'toss_decision': toss_decision.lower(),
                                 'winner': winner,
                                 'win_by_runs': win_by_runs,
                                 'win_by_wickets': win_by_wickets,
@@ -87,13 +95,11 @@ def run_backfill():
             existing_df = pd.read_csv(MATCHES_CSV_PATH)
             
             # --- THE SELF-HEALING FIX ---
-            # If the old CSV has 'match_id' instead of 'id', overwrite the whole file!
             if 'id' not in existing_df.columns:
                 print("♻️ Old database schema detected. Automatically upgrading to advanced schema...")
                 new_data.to_csv(MATCHES_CSV_PATH, index=False)
                 print(f"📁 Advanced database ready! Backfilled {len(new_data)} matches.")
             else:
-                # Normal duplicate check
                 new_data = new_data[~new_data['id'].isin(existing_df['id'])]
                 if new_data.empty:
                     print("👍 Database is already fully up-to-date!")
