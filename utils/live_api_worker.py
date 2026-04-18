@@ -7,8 +7,9 @@ import requests
 import re
 import google.generativeai as genai
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime , timedelta
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 print("Starting Live API Worker (Production + Weather + Auto-Alerts + Gen AI)...")
 
 # 1. Load API Keys
@@ -46,22 +47,29 @@ else:
     print("⚠️ No Gemini API Key found. AI Commentary disabled.")
     llm = None
 
-def send_telegram_alert(text):
-    """Sends an automated push notification to your phone."""
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Missing Telegram Token or Chat ID in .env")
-        return
+def send_telegram_alert(message):
+    """Sends a markdown formatted message to your Telegram Channel."""
+    # 🔍 Now looking for the exact variable names you used!
+    bot_token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
+    if not bot_token or not chat_id:
+        print("⚠️ Telegram credentials missing. Skipping alert.")
+        return
+        
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
-        'chat_id': TELEGRAM_CHAT_ID,
-        'text': text,
-        'parse_mode': 'Markdown'
+        "chat_id": chat_id,      # This will pass "@ai_cricket_alerts" perfectly
+        "text": message,
+        "parse_mode": "Markdown" # Lets us use bold and italic text!
     }
+    
     try:
-        requests.post(url, json=payload)
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            print(f"⚠️ Telegram Error: {response.text}")
     except Exception as e:
-        print(f"⚠️ Failed to send Telegram alert: {e}")
+        print(f"⚠️ Telegram Connection Error: {e}")
 
 def get_live_weather(city):
     if not WEATHER_KEY:
@@ -95,6 +103,13 @@ def fetch_cricbuzz_live_data():
     
     try:
         response = requests.get(url, headers=headers).json()
+        
+        # 🚨 NEW: Detect API Quota Limits!
+        if 'message' in response and 'exceeded' in str(response.get('message', '')).lower():
+            print("🚨 RAPIDAPI QUOTA EXCEEDED! You are out of free calls for today.")
+            # It will return None, and our new Prime-Time logic will just make it nap instead of deep sleeping!
+            return None
+            
         live_payload = None
         
         for match_type in response.get('typeMatches', []):
@@ -131,8 +146,8 @@ def fetch_cricbuzz_live_data():
                         'match_info': match_info
                     })
                     
-                    # 2. IS IT CURRENTLY LIVE?
-                    if state == 'In Progress' and live_payload is None:
+                    # 2. IS IT CURRENTLY LIVE? (FIXED: Added Timeouts and Breaks to the Whitelist!)
+                    if state in ['In Progress', 'Strategic Timeout', 'Innings Break', 'Toss'] and live_payload is None:
                         weather_data = get_live_weather(city)
                         if 'team2Score' in match_score:
                             target = match_score['team2Score']['inngs1']['target'] if 'target' in match_score.get('team2Score', {}).get('inngs1', {}) else 180
@@ -182,16 +197,20 @@ def fetch_cricbuzz_live_data():
                             live_payload = {
                                 'match_active': True, 'innings': 1, 'city': city, 'weather': weather_data,
                                 'batting_team': team1, 'bowling_team': team2, 'cur_score': cur_score,
-                                'wickets': wickets, 'overs': overs, 'crr': crr, 'projected_score': projected_score
+                                'wickets': wickets, 'overs': overs, 'crr': crr, 'projected_score': projected_score,
+                                'striker': striker, 'current_bowler': current_bowler # FIXED: Added to Innings 1!
                             }
                             
                     # 3. DID IT JUST FINISH? (Run our new ETL Pipeline)
                     elif state == 'Complete':
-                        log_completed_match({
-                            'team1': team1, 'team2': team2,
-                            'status': status, 'city': city,
-                            'match_info': match_info
-                        })
+                        try:
+                            log_completed_match({
+                                'team1': team1, 'team2': team2,
+                                'status': status, 'city': city,
+                                'match_info': match_info
+                            })
+                        except:
+                            pass
         
         # --- JSON SAVE FIX ---
         if live_payload:
@@ -201,8 +220,12 @@ def fetch_cricbuzz_live_data():
         else:
             final_payload = base_payload
 
-        os.makedirs('../data/processed', exist_ok=True)
-        with open('../data/processed/live_match_state.json', 'w') as f:
+        # ✅ PERMANENT FIX: Force it into the main project folder
+        save_dir = os.path.join(BASE_DIR, 'data', 'processed')
+        os.makedirs(save_dir, exist_ok=True)
+        
+        state_file = os.path.join(save_dir, 'live_match_state.json')
+        with open(state_file, 'w') as f:
             json.dump(final_payload, f)
             
         return final_payload
@@ -212,9 +235,12 @@ def fetch_cricbuzz_live_data():
         return None
 
 # ==========================================
-# 🧠 THE MISSING FIX: LOAD ML MODELS HERE
+# 🧠 LOAD ML MODELS HERE
 # ==========================================
-model_dir = '../models/'
+# Finds the directory of this script, then steps up one level
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+model_dir = os.path.join(BASE_DIR, 'models')
+
 try:
     live_pp = joblib.load(os.path.join(model_dir, 'live_chase_powerplay.pkl'))
     live_mid = joblib.load(os.path.join(model_dir, 'live_chase_middle.pkl'))
@@ -223,7 +249,7 @@ try:
 except Exception as e:
     print(f"❌ Error loading ML models: {e}")
     live_pp, live_mid, live_death = None, None, None
-# ==========================================
+
 
 def predict_win_prob(data):
     global live_pp, live_mid, live_death 
@@ -340,8 +366,16 @@ def log_completed_match(match):
             except:
                 pass
 
+# --- GLOBAL MEMORY FOR MLOPS ---
+completed_matches_memory = set()
+
 def run_worker():
-    state_file = '../data/processed/live_match_state.json'
+    # 🎯 This find the absolute path to the 'ipl-predictor' folder
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # 🎯 This forces the file to always be in the main project data folder
+    state_file = os.path.join(BASE_DIR, 'data', 'processed', 'live_match_state.json')
+    
     os.makedirs(os.path.dirname(state_file), exist_ok=True)
     
     print("📡 Worker is active. Smart Polling, Auto-Alerts, Momentum, & Gen AI ENABLED!")
@@ -349,122 +383,14 @@ def run_worker():
     last_win_prob = None 
     match_history = [] 
     current_innings_tracker = None
+    innings_break_alert_sent = False
     
     while True:
         try:
-            # --- 1. SMART HIBERNATION (Midnight to 3:00 PM IST) ---
-            now = datetime.now()
-            if now.hour < 15:
-                print(f"[{time.strftime('%X')}] ⏰ Morning Hibernation. Saving API calls... Sleeping for 1 hour.")
-                time.sleep(3600)
-                continue  
-            
-            # --- DEFAULT POLLING INTERVAL ---
-            poll_interval = 300  
-            
+            # 1. FETCH DATA (Or Fallback to Fake Test Data if Quota Empty)
             live_data = fetch_cricbuzz_live_data() 
             
-            if live_data and live_data.get('match_active'):
-                weather_str = f"{live_data['weather']['temp']}°C, Humidity: {live_data['weather']['humidity']}%" if live_data.get('weather') else "Unknown"
-                
-                # --- MOMENTUM TRACKER & NEW INNINGS ALERT ---
-                if current_innings_tracker != live_data['innings']:
-                    match_history = [] 
-                    current_innings_tracker = live_data['innings']
-                    
-                    # --- NEW: SEND AUTOMATED MESSAGE TO TELEGRAM ---
-                    if live_data['innings'] == 1:
-                        start_msg = (f"🏏 *LIVE MATCH TRACKING STARTED* 🏏\n\n"
-                                     f"*{live_data['batting_team']}* vs *{live_data['bowling_team']}*\n"
-                                     f"Innings 1 is underway! AI analytics and alerts are now active.")
-                        send_telegram_alert(start_msg)
-                    elif live_data['innings'] == 2:
-                        chase_msg = (f"🎯 *THE CHASE IS ON!* 🎯\n\n"
-                                     f"*{live_data['batting_team']}* needs {live_data['target']} runs to beat {live_data['bowling_team']}.\n"
-                                     f"AI Win Probability Engine is locked in!")
-                        send_telegram_alert(chase_msg)
-                
-                # (Keep the rest of your match_history.append code exactly the same below this...)
-                match_history.append({
-                    'score': live_data['cur_score'],
-                    'wickets': live_data['wickets']
-                })
-                
-                if len(match_history) > 4:
-                    match_history.pop(0)
-                
-                runs_last_18 = 0
-                wickets_last_18 = 0
-                if len(match_history) > 1:
-                    oldest = match_history[0]
-                    runs_last_18 = max(0, live_data['cur_score'] - oldest['score'])
-                    wickets_last_18 = max(0, live_data['wickets'] - oldest['wickets'])
-                
-                live_data['runs_last_18'] = runs_last_18
-                live_data['wickets_last_18'] = wickets_last_18
-
-                if live_data['innings'] == 2:
-                    win_prob, phase = predict_win_prob(live_data)
-                    
-                    if wickets_last_18 >= 2:
-                        win_prob = max(win_prob - 0.05, 0.01) 
-                    elif runs_last_18 >= 32:
-                        win_prob = min(win_prob + 0.05, 0.99) 
-                        
-                    live_data['chasing_win_prob'] = float(win_prob)
-                    live_data['current_phase'] = phase
-                    
-                    if last_win_prob is not None:
-                        swing = win_prob - last_win_prob
-                        if abs(swing) >= 0.15:
-                            direction = "📈 SURGED" if swing > 0 else "📉 CRASHED"
-                            alert_msg = (
-                                f"🚨 *GAME CHANGER ALERT!* 🚨\n\n"
-                                f"Win probability for {live_data['batting_team']} just *{direction}* by {abs(swing)*100:.1f}%!\n\n"
-                                f"🔥 *Momentum (Last 3 Ov):* {runs_last_18} runs, {wickets_last_18} wkts\n"
-                                f"📊 *Score:* {live_data['cur_score']}/{live_data['wickets']} ({live_data['overs']} Ov)\n"
-                                f"🔮 *New Win Prob:* {win_prob*100:.1f}%\n"
-                            )
-                            send_telegram_alert(alert_msg)
-                            
-                    last_win_prob = win_prob 
-                    print(f"[{time.strftime('%X')}] 🟢 INNINGS 2 | Momentum: {runs_last_18}R/{wickets_last_18}W | Win Prob: {win_prob*100:.1f}%")
-                else:
-                    last_win_prob = None 
-                    print(f"[{time.strftime('%X')}] 🟡 INNINGS 1 | Momentum: {runs_last_18}R/{wickets_last_18}W | Projected: {live_data['projected_score']}")
-                    
-                # --- TRIGGER GEMINI COMMENTARY ---
-                print(f"[{time.strftime('%X')}] 🤖 Generating AI Commentary...")
-                live_data['ai_commentary'] = generate_ai_commentary(live_data)
-                
-                # --- 2. ADAPTIVE POLLING (Speed up during Death Overs) ---
-                if live_data.get('overs', 0) >= 16:
-                    poll_interval = 120  
-                else:
-                    poll_interval = 300  
-
-            else:
-                last_win_prob = None 
-                match_history = []
-                
-                # --- 3. SLOW POLLING WHEN NO MATCH IS ACTIVE ---
-                poll_interval = 600  
-                
-                if live_data and 'todays_matches' in live_data:
-                    for match in live_data['todays_matches']:
-                        if match.get('state') == 'Complete':
-                            # Assuming you have a log_completed_match function defined earlier
-                            try:
-                                log_completed_match(match)
-                            except:
-                                pass
-                            
-                print(f"[{time.strftime('%X')}] ⏸️ No active live match. Scanning for completed matches...")
-
-            # =========================================================
-            # ☁️ FIREBASE CLOUD SYNC (RUNS EVERY TIME)
-            # =========================================================
-            # +++ UPDATED FORCED TEST WITH SCHEDULE +++
+            # +++ FORCED FIREBASE TEST FALLBACK +++
             if not live_data:
                 live_data = {
                     'match_active': False, 
@@ -476,31 +402,203 @@ def run_worker():
                             'team2': 'Kolkata Knight Riders',
                             'venue': 'MA Chidambaram Stadium',
                             'city': 'Chennai',
-                            'status': 'Match starts at 07:30 PM'
+                            'status': 'Match starts at 07:30 PM',
+                            'state': 'Upcoming'
                         }
                     ]
                 }
+            
+            # --- DEFAULT BASELINE POLLING ---
+            poll_interval = 300 
+            
+            # =========================================================
+            # 🏏 SCENARIO A: MATCH IS ACTIVELY RUNNING
+            # =========================================================
+            if live_data and live_data.get('match_active'):
+                innings = live_data.get('innings', 1)
+                
+                # FLAT 3-MINUTE POLLING: No matter if it's a break or timeout!
+                print(f"[{time.strftime('%X')}] 🔥 Match Active (Innings {innings}). Polling in 3 minutes...")
+                poll_interval = 180  
 
+                # --- MOMENTUM TRACKER & ALERTS ---
+                if current_innings_tracker != live_data['innings']:
+                    match_history = [] 
+                    current_innings_tracker = live_data['innings']
+                    if live_data['innings'] == 1:
+                        print(f"[{time.strftime('%X')}] 🔔 Alert: 1st Innings Started!")
+                    elif live_data['innings'] == 2:
+                        print(f"[{time.strftime('%X')}] 🔔 Alert: 2nd Innings Chase Started!")
+                        innings_break_alert_sent = False
+
+                match_history.append({'score': live_data.get('cur_score', 0), 'wickets': live_data.get('wickets', 0)})
+                if len(match_history) > 4:
+                    match_history.pop(0)
+                
+                runs_last_18 = 0
+                wickets_last_18 = 0
+                if len(match_history) > 1:
+                    oldest = match_history[0]
+                    runs_last_18 = max(0, live_data.get('cur_score', 0) - oldest['score'])
+                    wickets_last_18 = max(0, live_data.get('wickets', 0) - oldest['wickets'])
+                
+                live_data['runs_last_18'] = runs_last_18
+                live_data['wickets_last_18'] = wickets_last_18
+
+                if innings == 2:
+                    try:
+                        win_prob, current_phase = predict_win_prob(live_data)
+                        live_data['chasing_win_prob'] = float(win_prob)
+                        live_data['current_phase'] = current_phase
+                    except Exception as e:
+                        print(f"⚠️ ML Prediction Error: {e}")
+
+                try:
+                    print(f"[{time.strftime('%X')}] 🤖 Generating AI Commentary...")
+                    live_data['ai_commentary'] = generate_ai_commentary(live_data)
+                except:
+                    pass
+
+                # ==========================================
+                # 📨 TELEGRAM BROADCAST (SMART ROUTING)
+                # ==========================================
+                try:
+                    is_innings_break = (live_data['innings'] == 1 and (live_data.get('overs', 0) >= 20.0 or live_data.get('wickets', 0) == 10))
+
+                    if is_innings_break:
+                        if not innings_break_alert_sent:
+                            final_score = live_data.get('cur_score', 0)
+                            msg = f"☕ *INNINGS BREAK* ☕\n\n"
+                            msg += f"*{live_data.get('batting_team', 'Team')}* finishes with *{final_score}/{live_data.get('wickets', 0)}*\n"
+                            msg += f"🎯 *{live_data.get('bowling_team', 'Team')}* will need *{final_score + 1} runs* to win.\n\n"
+                            msg += f"⏳ The run-chase will begin in roughly 15-20 minutes.\n"
+                            msg += f"🤖 _Our AI Win Probability Engine will lock on to the chase on the very first ball!_"
+                            
+                            print(f"[{time.strftime('%X')}] 📨 Broadcasting Innings Break to Telegram...")
+                            send_telegram_alert(msg)
+                            innings_break_alert_sent = True
+                        else:
+                            print(f"[{time.strftime('%X')}] ☕ Innings Break active. Skipping Telegram spam.")
+                    
+                    else:
+                        t1 = live_data.get('batting_team', 'Team')
+                        t2 = live_data.get('bowling_team', 'Team')
+                        score = f"{live_data.get('cur_score', 0)}/{live_data.get('wickets', 0)}"
+                        overs = live_data.get('overs', 0)
+                        crr = live_data.get('crr', 0)
+                        striker = live_data.get('striker', 'Unknown')
+                        bowler = live_data.get('current_bowler', 'Unknown')
+                        
+                        msg = f"🏏 *LIVE IPL UPDATE* 🏏\n*{t1} vs {t2}*\n\n"
+                        msg += f"📊 *Score:* {score} ({overs} Ov)\n📈 *CRR:* {crr:.2f}\n"
+                        
+                        if live_data['innings'] == 1:
+                            msg += f"🎯 *Projected Score:* {live_data.get('projected_score', 'Calculating...')}\n"
+                        else:
+                            target = live_data.get('target', 0)
+                            req = live_data.get('runs_required', 0)
+                            balls = live_data.get('balls_left', 0)
+                            win_p = live_data.get('chasing_win_prob', 0) * 100
+                            msg += f"🎯 *Target:* {target} | *Need:* {req} in {balls} balls\n"
+                            msg += f"🔮 *AI Win Prob:* {win_p:.1f}%\n"
+
+                        # Only add the "At The Crease" section if we actually have player names!
+                        if striker != 'Unknown' and bowler != 'Unknown':
+                            msg += f"\n⚔️ *At The Crease:*\n🏏 {striker}\n⚾ {bowler}\n"
+                        
+                        if live_data.get('ai_commentary'):
+                            short_comm = live_data['ai_commentary'][:200] + "..." if len(live_data['ai_commentary']) > 200 else live_data['ai_commentary']
+                            msg += f"\n🤖 *AI Desk:* {short_comm}"
+
+                        print(f"[{time.strftime('%X')}] 📨 Broadcasting to Telegram...")
+                        send_telegram_alert(msg)
+                        
+                except Exception as e:
+                    print(f"⚠️ Failed to build Telegram message: {e}")
+
+            # =========================================================
+            # ⏸️ SCENARIO B: NO MATCH RUNNING (MORNING / POST-MATCH)
+            # =========================================================
+            else:
+                last_win_prob = None 
+                match_history = []
+                current_innings_tracker = None
+                
+                now = datetime.now()
+                all_completed = True
+                
+                if live_data and 'todays_matches' in live_data and len(live_data['todays_matches']) > 0:
+                    for match in live_data['todays_matches']:
+                        state = match.get('state', '')
+                        match_name = f"{match.get('team1')}_vs_{match.get('team2')}"
+                        
+                        # --- TRIGGER MLOPS IF A MATCH JUST FINISHED ---
+                        if state == 'Complete':
+                            if match_name not in completed_matches_memory:
+                                print(f"\n[{time.strftime('%X')}] 🏆 MATCH FINISHED: {match_name}")
+                                print("⚙️ Triggering Autonomous MLOps Pipeline...")
+                                try:
+                                    print("   -> Downloading new match data...")
+                                    subprocess.run(["python", "utils/backfill_2026.py"])
+                                    print("   -> Retraining AI Models...")
+                                    subprocess.run(["python", "src/phase2_preprocessing.py"])
+                                    subprocess.run(["python", "src/phase4_training.py"])
+                                    print("✅ Pipeline Complete! CSVs and Models Updated.")
+                                except Exception as e:
+                                    print(f"⚠️ MLOps Error: {e}")
+                                
+                                completed_matches_memory.add(match_name)
+                        else:
+                            # We found a match that is NOT complete yet
+                            all_completed = False
+                            
+                    # --- DEEP HIBERNATION LOGIC ---
+                    if all_completed:
+                        print(f"[{time.strftime('%X')}] 🌙 All matches finished! Deep sleep until tomorrow 10:00 AM.")
+                        tomorrow = now + timedelta(days=1)
+                        target_time = tomorrow.replace(hour=10, minute=0, second=0)
+                        poll_interval = int((target_time - now).total_seconds())
+                    else:
+                        # There are upcoming matches today! Let's calculate the sleep time.
+                        if now.hour < 14: # Morning (Before 2 PM)
+                            target_time = now.replace(hour=14, minute=45, second=0) # Wake at 2:45 PM for toss
+                            poll_interval = int((target_time - now).total_seconds())
+                            print(f"[{time.strftime('%X')}] ⏰ Morning Hibernation. Waking up at 2:45 PM.")
+                        elif now.hour >= 18 and now.hour < 19: # Break between afternoon/evening match
+                            target_time = now.replace(hour=18, minute=45, second=0) # Wake at 6:45 PM for evening toss
+                            poll_interval = int((target_time - now).total_seconds())
+                            print(f"[{time.strftime('%X')}] 🌅 Evening Nap. Waking up at 6:45 PM.")
+                        else:
+                            # Close to toss time, check every 5 minutes
+                            print(f"[{time.strftime('%X')}] ⏳ Toss approaching. Polling in 5 minutes...")
+                            poll_interval = 300
+                else:
+                    # No matches scheduled today at all
+                    print(f"[{time.strftime('%X')}] 📅 No IPL Matches today. Deep sleep until tomorrow 10:00 AM.")
+                    tomorrow = now + timedelta(days=1)
+                    target_time = tomorrow.replace(hour=10, minute=0, second=0)
+                    poll_interval = int((target_time - now).total_seconds())
+
+            # =========================================================
+            # ☁️ FIREBASE CLOUD SYNC
+            # =========================================================
             if live_data:
                 live_data['timestamp'] = time.strftime('%I:%M:%S %p')
                 FIREBASE_URL = "https://ipl-intel-db-default-rtdb.firebaseio.com/live_match_state.json"
-                
                 try:
-                    # Notice we are pushing 'live_data' here now!
                     cloud_response = requests.put(FIREBASE_URL, json=live_data)
                     if cloud_response.status_code == 200:
-                        print(f"[{time.strftime('%H:%M:%S')}] ☁️ Successfully pushed live data to Firebase!")
-                    else:
-                        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Firebase Error: {cloud_response.text}")
+                        print(f"[{time.strftime('%H:%M:%S')}] ☁️ Data synced to Firebase.")
                 except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Could not connect to Firebase: {e}")
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Firebase Error: {e}")
 
-            print(f"💤 Sleeping for {poll_interval // 60} minutes to conserve API quota.")
+            # Sleep calculated by the brain
+            print(f"💤 Next API call in {poll_interval // 60} minutes and {poll_interval % 60} seconds...\n")
             time.sleep(poll_interval) 
             
         except Exception as e:
-            print(f"⚠️ Error in worker loop: {e}")
-            time.sleep(300) 
+            print(f"⚠️ Worker Loop Error: {e}")
+            time.sleep(300) # Fallback sleep if something breaks
 
 if __name__ == "__main__":
     run_worker()

@@ -211,7 +211,7 @@ def render_live_match():
     auto_on = st.toggle("🔄 Enable Live Auto-Refresh", value=False, help="Turn this on to watch the live match update in real-time. Turn it OFF when using the Fantasy or Pre-Match tabs.")
     
     if auto_on:
-        st_autorefresh(interval=5000, key="live_match_updater")
+        st_autorefresh(interval=15000, key="live_match_updater")
         
     live_data = fetch_firebase_live_data()
         
@@ -237,19 +237,62 @@ def render_live_match():
                     # --- AI PRE-MATCH CALCULATION ON THE FLY ---
                     win_prob_html = ""
                     try:
-                        t1_form = form_df[form_df['team'] == t1_name]['rolling_5_form'].iloc[-1]
-                        t2_form = form_df[form_df['team'] == t2_name]['rolling_5_form'].iloc[-1]
+                        # 1. Fallback mapping in case API names don't match our database perfectly
+                        team_mapping = {
+                            'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
+                            'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiants': 'Rising Pune Supergiant',
+                            'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 'Gujarat Lions': 'Gujarat Titans'
+                        }
                         
-                        matchup_str = ' vs '.join(sorted([t1_name, t2_name]))
-                        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_name)]['dominance_score']
+                        t1_mapped = team_mapping.get(t1_name, t1_name)
+                        t2_mapped = team_mapping.get(t2_name, t2_name)
+
+                        # 2. Safely grab form (default to 0.5 if team is brand new/missing)
+                        t1_form_series = form_df[form_df['team'] == t1_mapped]['rolling_5_form']
+                        t1_form = t1_form_series.iloc[-1] if not t1_form_series.empty else 0.5
+                        
+                        t2_form_series = form_df[form_df['team'] == t2_mapped]['rolling_5_form']
+                        t2_form = t2_form_series.iloc[-1] if not t2_form_series.empty else 0.5
+                        
+                        # 3. Safely grab dominance
+                        matchup_str = ' vs '.join(sorted([t1_mapped, t2_mapped]))
+                        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_mapped)]['dominance_score']
                         dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
-                        v_dna = venue_df[venue_df['venue'] == v_name]['bat_first_win_pct'].iloc[0] if v_name in venue_df['venue'].values else 50.0
+                        
+                        # 4. Safely handle Venue mismatches 
+                        v_dna = 50.0 
+                        # NEW: Give it a safe default stadium just in case it completely fails to match!
+                        mapped_venue = venue_df['venue'].iloc[0] 
+                        for known_venue in venue_df['venue'].values:
+                            if str(known_venue).split(' ')[0] in v_name: 
+                                v_dna = venue_df[venue_df['venue'] == known_venue]['bat_first_win_pct'].iloc[0]
+                                mapped_venue = known_venue # Save the clean name!
+                                break
 
-                        t1_home = 1 if (home_stadiums.get(t1_name) and home_stadiums.get(t1_name) in v_name) else 0
-                        t2_home = 1 if (home_stadiums.get(t2_name) and home_stadiums.get(t2_name) in v_name) else 0
+                        # 5. Check Home Advantage
+                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
+                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
 
+                        # 6. Run the Prediction (FIXED: Pass 'mapped_venue' instead of 'v_name')
                         input_data = pd.DataFrame({
-                            'team1': [t1_name], 'team2': [t2_name], 'venue': [v_name], 
+                            'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [mapped_venue], 
+                            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
+                            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
+                            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+                        })
+
+                        input_transformed = preprocessor.transform(input_data)
+                        probs = model.predict_proba(input_transformed)[0]
+                        prob_t1 = probs[1] * 100
+                        prob_t2 = probs[0] * 100
+
+                        # 5. Check Home Advantage
+                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
+                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
+
+                        # 6. Run the Prediction
+                        input_data = pd.DataFrame({
+                            'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [v_name], 
                             'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
                             'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
                             'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
@@ -260,7 +303,71 @@ def render_live_match():
                         prob_t1 = probs[1] * 100
                         prob_t2 = probs[0] * 100
                         
-                        w# FIX: Removed indentation spaces so Streamlit doesn't think it's a code block!
+                        win_prob_html = f"""
+                        <div style="background-color: #0e1117; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                            <p style="text-align: center; margin: 0; font-size: 12px; color: #aaaaaa;">AI Win Probability Forecast</p>
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px; font-weight: bold;">
+                                <span style="color: #3498DB;">{prob_t1:.1f}%</span>
+                                <span style="color: #E74C3C;">{prob_t2:.1f}%</span>
+                            </div>
+                            <div style="width: 100%; background-color: #E74C3C; height: 6px; border-radius: 3px; margin-top: 5px; overflow: hidden;">
+                                <div style="width: {prob_t1}%; background-color: #3498DB; height: 100%;"></div>
+                            </div>
+                        </div>
+                        """
+                    except Exception as e:
+                        # Now if it fails, it will print the error in your terminal so we know exactly why!
+                        print(f"⚠️ Daily Hub ML Error for {t1_name} vs {t2_name}: {e}")
+                        # --- AI PRE-MATCH CALCULATION ON THE FLY ---
+                    win_prob_html = ""
+                    try:
+                        # 1. Fallback mapping in case API names don't match our database perfectly
+                        team_mapping = {
+                            'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
+                            'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiants': 'Rising Pune Supergiant',
+                            'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 'Gujarat Lions': 'Gujarat Titans'
+                        }
+                        
+                        t1_mapped = team_mapping.get(t1_name, t1_name)
+                        t2_mapped = team_mapping.get(t2_name, t2_name)
+
+                        # 2. Safely grab form (default to 0.5 if team is brand new/missing)
+                        t1_form_series = form_df[form_df['team'] == t1_mapped]['rolling_5_form']
+                        t1_form = t1_form_series.iloc[-1] if not t1_form_series.empty else 0.5
+                        
+                        t2_form_series = form_df[form_df['team'] == t2_mapped]['rolling_5_form']
+                        t2_form = t2_form_series.iloc[-1] if not t2_form_series.empty else 0.5
+                        
+                        # 3. Safely grab dominance
+                        matchup_str = ' vs '.join(sorted([t1_mapped, t2_mapped]))
+                        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_mapped)]['dominance_score']
+                        dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
+                        
+                        # 4. Safely handle Venue mismatches 
+                        v_dna = 50.0 
+                        for known_venue in venue_df['venue'].values:
+                            if str(known_venue).split(' ')[0] in v_name: 
+                                v_dna = venue_df[venue_df['venue'] == known_venue]['bat_first_win_pct'].iloc[0]
+                                break
+
+                        # 5. Check Home Advantage
+                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
+                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
+
+                        # 6. Run the Prediction
+                        input_data = pd.DataFrame({
+                            'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [v_name], 
+                            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
+                            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
+                            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+                        })
+
+                        input_transformed = preprocessor.transform(input_data)
+                        probs = model.predict_proba(input_transformed)[0]
+                        prob_t1 = probs[1] * 100
+                        prob_t2 = probs[0] * 100
+                        
+                        # FIXED: Removed the indentations so Streamlit doesn't think it's a code block!
                         win_prob_html = f"""<div style="background-color: #0e1117; padding: 10px; border-radius: 5px; margin-top: 10px;">
 <p style="text-align: center; margin: 0; font-size: 12px; color: #aaaaaa;">AI Win Probability Forecast</p>
 <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px; font-weight: bold;">
@@ -272,7 +379,8 @@ def render_live_match():
 </div>
 </div>"""
                     except Exception as e:
-                        pass # Silently skip AI prediction if team data isn't in DB yet
+                        print(f"⚠️ Daily Hub ML Error for {t1_name} vs {t2_name}: {e}")
+                        win_prob_html = f"<p style='text-align: center; color: #E74C3C; font-size: 12px; margin-top: 10px;'>⚠️ AI Forecast temporarily unavailable</p>"
                         
                     st.markdown(f"""
                     <div style="background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
@@ -736,6 +844,7 @@ def main():
             text-shadow: 0 0 8px rgba(0, 212, 255, 0.4) !important;
             font-weight: 700 !important;
         }
+                
     </style>
     """, unsafe_allow_html=True)
 
