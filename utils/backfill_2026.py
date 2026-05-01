@@ -5,25 +5,46 @@ import time
 import re
 from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
-# Safely load the key from your local .env file!
-load_dotenv('.env')
-CRICBUZZ_KEY = os.getenv("CRICBUZZ_KEY") 
+# --- BULLETPROOF PATH CONFIGURATION ---
+# 1. Get the directory where THIS script (backfill_2026.py) lives (the 'utils' folder)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Go up one level to the main project folder
+BASE_DIR = os.path.dirname(SCRIPT_DIR)
+
+# 3. Load the .env file explicitly from the main project folder
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+CRICBUZZ_KEY_7 = os.getenv("CRICBUZZ_KEY_7") 
 API_HOST = "cricbuzz-cricket.p.rapidapi.com"
-# Fixed path so it saves inside your project folder
-MATCHES_CSV_PATH = 'data/raw/matches_current_season.csv'
+
+# 4. Construct the absolute path to the CSV file
+MATCHES_CSV_PATH = os.path.join(BASE_DIR, 'data', 'raw', 'matches_current_season.csv')
 
 def run_backfill():
+    print(f"📁 Target Database Path: {MATCHES_CSV_PATH}")
     print("🚀 Starting Advanced IPL 2026 Historical Backfill...")
-    if not CRICBUZZ_KEY:
-        print("❌ Error: Could not find CRICBUZZ_KEY in .env file!")
+    
+    if not CRICBUZZ_KEY_7:
+        print("❌ Error: Could not find CRICBUZZ_KEY_7 in .env file!")
         return
 
     url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent"
-    headers = {"X-RapidAPI-Key": CRICBUZZ_KEY, "X-RapidAPI-Host": API_HOST}
+    headers = {"X-RapidAPI-Key": CRICBUZZ_KEY_7, "X-RapidAPI-Host": API_HOST}
 
     try:
-        response = requests.get(url, headers=headers).json()
+        raw_response = requests.get(url, headers=headers)
+        
+        if raw_response.status_code != 200:
+            print(f"❌ API CRASH! Status Code: {raw_response.status_code}")
+            print(f"Details: {raw_response.text}")
+            return
+            
+        response = raw_response.json()
+        
+        if 'message' in response:
+            print(f"⚠️ API EXHAUSTED OR BLOCKED: {response['message']}")
+            return
+
         missed_matches = []
         
         for match_type in response.get('typeMatches', []):
@@ -43,11 +64,9 @@ def run_backfill():
                             venue = match_info.get('venueInfo', {}).get('ground', 'Unknown Stadium')
                             status = match_info.get('status', '')
                             
-                            # Grab Toss Info
                             toss_winner = match_info.get('tossResults', {}).get('tossWinnerName', 'Unknown')
                             toss_decision = match_info.get('tossResults', {}).get('decision', 'Unknown')
                             
-                            # Parse win_by_runs and win_by_wickets using Regex
                             win_by_runs = 0
                             win_by_wickets = 0
                             
@@ -81,31 +100,33 @@ def run_backfill():
                             })
 
         if not missed_matches:
-            print("⚠️ No completed IPL matches found in the recent endpoint.")
+            print("⚠️ API call succeeded, but no COMPLETED IPL matches were found in the last 48 hours.")
             return
 
         # Convert to DataFrame
         new_data = pd.DataFrame(missed_matches)
+        
+        # Ensure the target directory exists
         os.makedirs(os.path.dirname(MATCHES_CSV_PATH), exist_ok=True)
         
         if not os.path.exists(MATCHES_CSV_PATH):
             new_data.to_csv(MATCHES_CSV_PATH, index=False)
-            print(f"📁 Created advanced database! Backfilled {len(new_data)} matches with full toss/venue data.")
+            print(f"📁 Created advanced database! Backfilled {len(new_data)} matches.")
         else:
             existing_df = pd.read_csv(MATCHES_CSV_PATH)
             
-            # --- THE SELF-HEALING FIX ---
             if 'id' not in existing_df.columns:
-                print("♻️ Old database schema detected. Automatically upgrading to advanced schema...")
+                print("♻️ Old database schema detected. Upgrading...")
                 new_data.to_csv(MATCHES_CSV_PATH, index=False)
-                print(f"📁 Advanced database ready! Backfilled {len(new_data)} matches.")
             else:
-                new_data = new_data[~new_data['id'].isin(existing_df['id'])]
-                if new_data.empty:
+                # Find matches that are in new_data but NOT in existing_df
+                unique_new_data = new_data[~new_data['id'].isin(existing_df['id'])]
+                
+                if unique_new_data.empty:
                     print("👍 Database is already fully up-to-date!")
                 else:
-                    new_data.to_csv(MATCHES_CSV_PATH, mode='a', header=False, index=False)
-                    print(f"💾 Successfully backfilled {len(new_data)} new matches!")
+                    unique_new_data.to_csv(MATCHES_CSV_PATH, mode='a', header=False, index=False)
+                    print(f"💾 Successfully appended {len(unique_new_data)} new matches to your master CSV!")
 
     except Exception as e:
         print(f"❌ Backfill Error: {e}")

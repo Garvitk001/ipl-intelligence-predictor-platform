@@ -3,6 +3,7 @@ import json
 import os
 import pandas as pd
 import joblib
+import subprocess
 import requests
 import re
 import google.generativeai as genai
@@ -10,6 +11,17 @@ from dotenv import load_dotenv
 from datetime import datetime , timedelta
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+# 🔑 8-CYLINDER DYNAMIC KEY LOADER
+API_KEYS = []
+# range(1, 9) checks numbers 1 through 8!
+for i in range(1, 9): 
+    key = os.getenv(f'CRICBUZZ_KEY_{i}')
+    if key:
+        API_KEYS.append(key)
+
+print(f"🔋 Engine started with {len(API_KEYS)} API Keys loaded!")
+current_key_index = 0
 print("Starting Live API Worker (Production + Weather + Auto-Alerts + Gen AI)...")
 
 # 1. Load API Keys
@@ -91,8 +103,18 @@ def get_live_weather(city):
 
 def fetch_cricbuzz_live_data():
     """Fetches live match data, handles upcoming schedules, and runs the ML engines."""
+    global current_key_index  # 👈 REQUIRED FOR THE 8-CYLINDER ROTATOR
+    
+    # 1. Check if keys loaded properly
+    if not API_KEYS:
+        print("❌ CRITICAL ERROR: No API keys found in .env file!")
+        return None
+
+    # 2. Grab the current active key
+    active_key = API_KEYS[current_key_index]
+    
     url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live"
-    headers = {"X-RapidAPI-Key": CRICBUZZ_KEY, "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"}
+    headers = {"X-RapidAPI-Key": active_key, "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"}
     
     # Initialize a clean state with the current timestamp!
     base_payload = {
@@ -104,12 +126,25 @@ def fetch_cricbuzz_live_data():
     try:
         response = requests.get(url, headers=headers).json()
         
-        # 🚨 NEW: Detect API Quota Limits!
+        # =========================================================
+        # 🚨 THE 8-CYLINDER AUTO-SWAPPER
+        # =========================================================
         if 'message' in response and 'exceeded' in str(response.get('message', '')).lower():
-            print("🚨 RAPIDAPI QUOTA EXCEEDED! You are out of free calls for today.")
-            # It will return None, and our new Prime-Time logic will just make it nap instead of deep sleeping!
-            return None
+            print(f"🚨 Key {current_key_index + 1} exhausted! Attempting rotation...")
             
+            # Move to the next key in the list
+            current_key_index += 1
+            
+            # Check if we are completely out of all 8 keys
+            if current_key_index >= len(API_KEYS):
+                print("💀 ALL API KEYS EXHAUSTED! System going to sleep.")
+                return None 
+                
+            print(f"🔄 Swapping to Key {current_key_index + 1} and retrying instantly...")
+            # Recursively call the function again so it instantly tries the next key!
+            return fetch_cricbuzz_live_data() 
+        # =========================================================
+
         live_payload = None
         
         for match_type in response.get('typeMatches', []):
@@ -369,6 +404,56 @@ def log_completed_match(match):
 # --- GLOBAL MEMORY FOR MLOPS ---
 completed_matches_memory = set()
 
+
+
+def get_terminal_prediction(team1, team2, venue_name):
+    """Runs a quick headless ML prediction for the terminal dashboard"""
+    try:
+        # Fallback mapping
+        team_mapping = {
+            'RCB': 'Royal Challengers Bengaluru', 'CSK': 'Chennai Super Kings', 'MI': 'Mumbai Indians', 
+            'PBKS': 'Punjab Kings', 'DC': 'Delhi Capitals', 'SRH': 'Sunrisers Hyderabad', 
+            'RR': 'Rajasthan Royals', 'KKR': 'Kolkata Knight Riders', 'GT': 'Gujarat Titans', 'LSG': 'Lucknow Super Giants'
+        }
+        t1 = team_mapping.get(team1, team1)
+        t2 = team_mapping.get(team2, team2)
+
+        # Get Form & Dominance
+        t1_form = form_df[form_df['team'] == t1]['rolling_5_form'].iloc[-1] if not form_df[form_df['team'] == t1].empty else 0.5
+        t2_form = form_df[form_df['team'] == t2]['rolling_5_form'].iloc[-1] if not form_df[form_df['team'] == t2].empty else 0.5
+        
+        matchup_str = ' vs '.join(sorted([t1, t2]))
+        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1)]['dominance_score']
+        dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
+
+        # Fuzzy Venue Match
+        v_dna = 50.0 
+        mapped_venue = venue_df['venue'].iloc[0] 
+        for known_venue in venue_df['venue'].values:
+            if str(known_venue).split(' ')[0].lower() in venue_name.lower(): 
+                v_dna = venue_df[venue_df['venue'] == known_venue]['bat_first_win_pct'].iloc[0]
+                mapped_venue = known_venue
+                break
+
+        # Run Model
+        input_data = pd.DataFrame({
+            'team1': [t1], 'team2': [t2], 'venue': [mapped_venue], 
+            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
+            'team1_home': [0], 'team2_home': [0], 'team1_won_toss': [1],
+            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+        })
+
+        input_transformed = preprocessor.transform(input_data)
+        probs = model.predict_proba(input_transformed)[0]
+
+        if probs[1] > probs[0]:
+            return f"🔮 AI Prediction: {t1} ({probs[1]*100:.1f}%) | {t2} ({probs[0]*100:.1f}%)"
+        else:
+            return f"🔮 AI Prediction: {t2} ({probs[0]*100:.1f}%) | {t1} ({probs[1]*100:.1f}%)"
+            
+    except Exception as e:
+        return "🔮 AI Prediction: Analyzing closer to Toss..."
+
 def run_worker():
     # 🎯 This find the absolute path to the 'ipl-predictor' folder
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -384,6 +469,7 @@ def run_worker():
     match_history = [] 
     current_innings_tracker = None
     innings_break_alert_sent = False
+    highest_over_seen = -1.0
     
     while True:
         try:
@@ -424,6 +510,7 @@ def run_worker():
                 # --- MOMENTUM TRACKER & ALERTS ---
                 if current_innings_tracker != live_data['innings']:
                     match_history = [] 
+                    highest_over_seen = -1.0
                     current_innings_tracker = live_data['innings']
                     if live_data['innings'] == 1:
                         print(f"[{time.strftime('%X')}] 🔔 Alert: 1st Innings Started!")
@@ -532,14 +619,14 @@ def run_worker():
                         state = match.get('state', '')
                         match_name = f"{match.get('team1')}_vs_{match.get('team2')}"
                         
-                        # --- TRIGGER MLOPS IF A MATCH JUST FINISHED ---
+                      # --- TRIGGER MLOPS IF A MATCH JUST FINISHED ---
                         if state == 'Complete':
                             if match_name not in completed_matches_memory:
                                 print(f"\n[{time.strftime('%X')}] 🏆 MATCH FINISHED: {match_name}")
                                 print("⚙️ Triggering Autonomous MLOps Pipeline...")
                                 try:
                                     print("   -> Downloading new match data...")
-                                    subprocess.run(["python", "utils/backfill_2026.py"])
+                                    subprocess.run(["python", "utils/backfill_2026.py"]) # <--- IT IS ALREADY HERE!
                                     print("   -> Retraining AI Models...")
                                     subprocess.run(["python", "src/phase2_preprocessing.py"])
                                     subprocess.run(["python", "src/phase4_training.py"])
@@ -554,7 +641,16 @@ def run_worker():
                             
                     # --- DEEP HIBERNATION LOGIC ---
                     if all_completed:
-                        print(f"[{time.strftime('%X')}] 🌙 All matches finished! Deep sleep until tomorrow 10:00 AM.")
+                        print(f"[{time.strftime('%X')}] 🌙 All matches finished! Preparing for Deep Sleep...")
+                        
+                        print("📅 Fetching tomorrow's schedule before sleeping...")
+                        try:
+                            subprocess.run(["python", "utils/auto_schedule.py"])
+                            subprocess.run(["python", "utils/fetch_squads.py"])
+                        except Exception as e:
+                            print(f"⚠️ Schedule Auto-Update Failed: {e}")
+
+                        print("💤 System going offline until tomorrow 10:00 AM.")
                         tomorrow = now + timedelta(days=1)
                         target_time = tomorrow.replace(hour=10, minute=0, second=0)
                         poll_interval = int((target_time - now).total_seconds())
@@ -573,11 +669,34 @@ def run_worker():
                             print(f"[{time.strftime('%X')}] ⏳ Toss approaching. Polling in 5 minutes...")
                             poll_interval = 300
                 else:
-                    # No matches scheduled today at all
-                    print(f"[{time.strftime('%X')}] 📅 No IPL Matches today. Deep sleep until tomorrow 10:00 AM.")
-                    tomorrow = now + timedelta(days=1)
-                    target_time = tomorrow.replace(hour=10, minute=0, second=0)
-                    poll_interval = int((target_time - now).total_seconds())
+                    # 🕒 IPL Prime Time Check
+                    # If the API is empty but it's between 2:00 PM and 11:00 PM, 
+                    # do NOT sleep until tomorrow. Take a 30-minute nap instead!
+                    if 14 <= now.hour < 23:
+                        print(f"[{time.strftime('%X')}] ⏸️ API is empty (Pre-Toss). Taking a 30-minute nap...")
+                        poll_interval = 1800  # 30 minutes
+                    else:
+                        print(f"[{time.strftime('%X')}] 🌙 No IPL Matches active. Deep sleep until tomorrow 10:00 AM.")
+                        tomorrow = now + timedelta(days=1) if now.hour >= 23 else now
+                        target_time = tomorrow.replace(hour=10, minute=0, second=0)
+                        
+                        if target_time > now:
+                            poll_interval = int((target_time - now).total_seconds())
+                        else:
+                            poll_interval = 3600  # Fallback to 1 hour
+
+            # =========================================================
+            # 🛡️ TIME-TRAVEL BLOCKER (STALE CACHE PREVENTION)
+            # =========================================================
+            if live_data and live_data.get('match_active'):
+                current_over = float(live_data.get('overs', 0.0))
+                
+                # If the API sends us backward in time, DELETE the payload!
+                if current_over < highest_over_seen and live_data['innings'] == current_innings_tracker:
+                    print(f"[{time.strftime('%X')}] 🛡️ STALE CACHE BLOCKED! API sent {current_over} Ov, but we are already at {highest_over_seen} Ov.")
+                    live_data = None # Completely nullify the stale data
+                else:
+                    highest_over_seen = max(highest_over_seen, current_over)
 
             # =========================================================
             # ☁️ FIREBASE CLOUD SYNC

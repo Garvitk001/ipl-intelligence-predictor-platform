@@ -225,7 +225,99 @@ def render_live_match():
         
         todays_matches = live_data.get('todays_matches', [])
         if not todays_matches:
-            st.warning("No IPL matches scheduled for today.")
+            # --- FALLBACK TO STATIC CSV SCHEDULE ---
+            import pandas as pd
+            from datetime import datetime
+            try:
+                schedule_df = pd.read_csv('data/raw/ipl_2026_schedule.csv') 
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                todays_games = schedule_df[schedule_df['Date'] == today_str]
+                
+                if not todays_games.empty:
+                    st.info("📡 Live API is in pre-toss mode. Loading scheduled matches...")
+                    for idx, row in todays_games.iterrows():
+                        # Create a beautifully bordered Native Streamlit Card
+                        with st.container(border=True):
+                            
+                            # 1. Match Header (Centered & Clean)
+                            st.markdown(f"<h3 style='text-align: center; color: #E0E0E0;'>🏏 {row['Team1']} <span style='color: #888; font-size: 0.8em;'>vs</span> {row['Team2']}</h3>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='text-align: center; color: #888; margin-top: -10px;'>📍 {row['Venue']} &nbsp;|&nbsp; ⏰ <b>{row['Time']}</b></p>", unsafe_allow_html=True)
+                            
+                            st.markdown("<br>", unsafe_allow_html=True) # Little breathing room
+                            
+                            # 2. Centered Button using Columns!
+                            col1, col2, col3 = st.columns([1, 1.5, 1])
+                            with col2:
+                                # 'primary' type gives it a nice premium highlight color
+                                predict_btn = st.button(f"🔮 Predict Winner", key=f"pred_{idx}", use_container_width=True, type="primary")
+                            
+                            # 3. If Button is Clicked -> Show the ML Magic INSIDE the card
+                            if predict_btn:
+                                with st.spinner("Analyzing team form, venue DNA, and historical dominance..."):
+                                    try:
+                                        # Fallback mapping
+                                        team_mapping = {
+                                            'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
+                                            'Deccan Chargers': 'Sunrisers Hyderabad', 'Rising Pune Supergiants': 'Rising Pune Supergiant',
+                                            'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 'Gujarat Lions': 'Gujarat Titans'
+                                        }
+                                        
+                                        t1_mapped = team_mapping.get(row['Team1'], row['Team1'])
+                                        t2_mapped = team_mapping.get(row['Team2'], row['Team2'])
+                                        
+                                        # Form & Dominance
+                                        t1_form = form_df[form_df['team'] == t1_mapped]['rolling_5_form'].iloc[-1] if not form_df[form_df['team'] == t1_mapped].empty else 0.5
+                                        t2_form = form_df[form_df['team'] == t2_mapped]['rolling_5_form'].iloc[-1] if not form_df[form_df['team'] == t2_mapped].empty else 0.5
+                                        
+                                        matchup_str = ' vs '.join(sorted([t1_mapped, t2_mapped]))
+                                        dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_mapped)]['dominance_score']
+                                        dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
+                                        
+                                        # Venue DNA
+                                        v_dna = 50.0 
+                                        mapped_venue = venue_df['venue'].iloc[0] 
+                                        for known_venue in venue_df['venue'].values:
+                                            if str(known_venue).split(' ')[0] in row['Venue']: 
+                                                v_dna = venue_df[venue_df['venue'] == known_venue]['bat_first_win_pct'].iloc[0]
+                                                mapped_venue = known_venue
+                                                break
+
+                                        # Home Advantage
+                                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in row['Venue']) else 0
+                                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in row['Venue']) else 0
+
+                                        # Predict!
+                                        input_data = pd.DataFrame({
+                                            'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [mapped_venue], 
+                                            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
+                                            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
+                                            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
+                                        })
+
+                                        input_transformed = preprocessor.transform(input_data)
+                                        probs = model.predict_proba(input_transformed)[0]
+                                        prob_t1, prob_t2 = probs[1] * 100, probs[0] * 100
+                                        
+                                        # 4. Premium Progress Bar Design
+                                        st.markdown(f"""
+<div style="background-color: #161b22; padding: 20px; border-radius: 12px; margin-top: 15px; border: 1px solid #30363d; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+    <p style="text-align: center; margin: 0 0 10px 0; font-size: 13px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">📊 AI Win Probability</p>
+    <div style="display: flex; justify-content: space-between; font-size: 16px; margin-bottom: 8px; font-weight: bold; font-family: sans-serif;">
+        <span style="color: #58a6ff;">{t1_mapped} ({prob_t1:.1f}%)</span>
+        <span style="color: #ff7b72;">{t2_mapped} ({prob_t2:.1f}%)</span>
+    </div>
+    <div style="width: 100%; background-color: #ff7b72; height: 12px; border-radius: 6px; overflow: hidden; display: flex;">
+        <div style="width: {prob_t1}%; background-color: #58a6ff; height: 100%; box-shadow: 2px 0 5px rgba(0,0,0,0.2);"></div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+                                        
+                                    except Exception as e:
+                                        st.error(f"⚠️ Prediction Engine Error: {e}")
+                else:
+                    st.warning("No IPL matches scheduled for today.")
+            except Exception as e:
+                st.warning("No IPL matches scheduled for today. (Schedule file not found)")
         else:
             cols = st.columns(len(todays_matches) if len(todays_matches) < 3 else 3)
             for idx, match in enumerate(todays_matches):
@@ -247,7 +339,7 @@ def render_live_match():
                         t1_mapped = team_mapping.get(t1_name, t1_name)
                         t2_mapped = team_mapping.get(t2_name, t2_name)
 
-                        # 2. Safely grab form (default to 0.5 if team is brand new/missing)
+                        # 2. Safely grab form 
                         t1_form_series = form_df[form_df['team'] == t1_mapped]['rolling_5_form']
                         t1_form = t1_form_series.iloc[-1] if not t1_form_series.empty else 0.5
                         
@@ -259,21 +351,20 @@ def render_live_match():
                         dom_val = dom_df[(dom_df['matchup'] == matchup_str) & (dom_df['winner'] == t1_mapped)]['dominance_score']
                         dom_val = dom_val.iloc[0] if not dom_val.empty else 0.5
                         
-                        # 4. Safely handle Venue mismatches 
+                        # 4. Safely handle Venue mismatches (THE FIX IS HERE!)
                         v_dna = 50.0 
-                        # NEW: Give it a safe default stadium just in case it completely fails to match!
                         mapped_venue = venue_df['venue'].iloc[0] 
                         for known_venue in venue_df['venue'].values:
                             if str(known_venue).split(' ')[0] in v_name: 
                                 v_dna = venue_df[venue_df['venue'] == known_venue]['bat_first_win_pct'].iloc[0]
-                                mapped_venue = known_venue # Save the clean name!
+                                mapped_venue = known_venue # Save the clean name for the ML Model!
                                 break
 
-                        # 5. Check Home Advantage
-                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
-                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
+                        # 5. Check Home Advantage Safely
+                        t1_home = 1 if ('home_stadiums' in globals() and home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
+                        t2_home = 1 if ('home_stadiums' in globals() and home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
 
-                        # 6. Run the Prediction (FIXED: Pass 'mapped_venue' instead of 'v_name')
+                        # 6. Run the Prediction (Passing mapped_venue instead of v_name)
                         input_data = pd.DataFrame({
                             'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [mapped_venue], 
                             'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
@@ -285,39 +376,23 @@ def render_live_match():
                         probs = model.predict_proba(input_transformed)[0]
                         prob_t1 = probs[1] * 100
                         prob_t2 = probs[0] * 100
-
-                        # 5. Check Home Advantage
-                        t1_home = 1 if (home_stadiums.get(t1_mapped) and home_stadiums.get(t1_mapped) in v_name) else 0
-                        t2_home = 1 if (home_stadiums.get(t2_mapped) and home_stadiums.get(t2_mapped) in v_name) else 0
-
-                        # 6. Run the Prediction
-                        input_data = pd.DataFrame({
-                            'team1': [t1_mapped], 'team2': [t2_mapped], 'venue': [v_name], 
-                            'toss_decision': ['field'], 'venue_bat_first_win_pct': [v_dna],
-                            'team1_home': [t1_home], 'team2_home': [t2_home], 'team1_won_toss': [1],
-                            'form_diff': [t1_form - t2_form], 'team1_dominance': [dom_val]
-                        })
-
-                        input_transformed = preprocessor.transform(input_data)
-                        probs = model.predict_proba(input_transformed)[0]
-                        prob_t1 = probs[1] * 100
-                        prob_t2 = probs[0] * 100
                         
+                        # 7. Apply the Premium Progress Bar UI!
                         win_prob_html = f"""
-                        <div style="background-color: #0e1117; padding: 10px; border-radius: 5px; margin-top: 10px;">
-                            <p style="text-align: center; margin: 0; font-size: 12px; color: #aaaaaa;">AI Win Probability Forecast</p>
-                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-top: 5px; font-weight: bold;">
-                                <span style="color: #3498DB;">{prob_t1:.1f}%</span>
-                                <span style="color: #E74C3C;">{prob_t2:.1f}%</span>
+                        <div style="background-color: #161b22; padding: 15px; border-radius: 8px; margin-top: 15px; border: 1px solid #30363d; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                            <p style="text-align: center; margin: 0 0 8px 0; font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">📊 Pre-Match Win Forecast</p>
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 5px; font-weight: bold; font-family: sans-serif;">
+                                <span style="color: #58a6ff;">{t1_mapped} ({prob_t1:.1f}%)</span>
+                                <span style="color: #ff7b72;">{t2_mapped} ({prob_t2:.1f}%)</span>
                             </div>
-                            <div style="width: 100%; background-color: #E74C3C; height: 6px; border-radius: 3px; margin-top: 5px; overflow: hidden;">
-                                <div style="width: {prob_t1}%; background-color: #3498DB; height: 100%;"></div>
+                            <div style="width: 100%; background-color: #ff7b72; height: 8px; border-radius: 4px; overflow: hidden; display: flex;">
+                                <div style="width: {prob_t1}%; background-color: #58a6ff; height: 100%;"></div>
                             </div>
                         </div>
                         """
                     except Exception as e:
-                        # Now if it fails, it will print the error in your terminal so we know exactly why!
-                        print(f"⚠️ Daily Hub ML Error for {t1_name} vs {t2_name}: {e}")
+                        print(f"⚠️ Live Hub ML Error for {t1_name} vs {t2_name}: {e}")
+                        win_prob_html = f"<p style='text-align: center; color: #E74C3C; font-size: 12px; margin-top: 10px;'>⚠️ AI Forecast Error: Check Terminal</p>"
                         # --- AI PRE-MATCH CALCULATION ON THE FLY ---
                     win_prob_html = ""
                     try:
@@ -666,7 +741,7 @@ def render_venue_intel():
 def render_fantasy_assistant():
     st.title("💸 Dream11 Fantasy XI Optimizer (Pro)")
     st.markdown("### Weighted Form & Role-Based AI Generator")
-    st.info("💡 *The AI gives a 1.5x weight multiplier to recent seasons to prioritize current form. It then mathematically builds a legal 11-player lineup (WKs, BATs, ARs, BOWLs).*")
+    st.info("💡 *The AI cross-references official 2026 rosters and gives a 3x weight multiplier to current season form to mathematically build the perfect playing XI.*")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -682,7 +757,7 @@ def render_fantasy_assistant():
             st.warning("Please select two different teams.")
             return
             
-        with st.spinner("Crunching historical data and weighting recent form..."):
+        with st.spinner("Crunching historical data, verifying official 2026 rosters, and weighting recent form..."):
             team_mapping = {
                 'Delhi Daredevils': 'Delhi Capitals', 'Kings XI Punjab': 'Punjab Kings', 
                 'Deccan Chargers': 'Sunrisers Hyderabad', 'Royal Challengers Bangalore': 'Royal Challengers Bengaluru', 
@@ -697,13 +772,33 @@ def render_fantasy_assistant():
             if match_subset.empty:
                 st.warning("No historical match data found between these two teams.")
                 return
-                
-            if pd.api.types.is_numeric_dtype(match_subset['season']):
-                recent_cutoff = match_subset['season'].max() - 2
-                match_subset['weight'] = match_subset['season'].apply(lambda x: 1.5 if x >= recent_cutoff else 1.0)
-            else:
-                match_subset['weight'] = 1.0 
-                
+
+            # --- 1. THE OFFICIAL ROSTER FILTER ---
+            try:
+                # Read the CSV we generated with fetch_squads.py
+                roster_df = pd.read_csv('data/raw/ipl_2026_rosters.csv')
+                # Filter to ONLY players who belong to the two selected teams
+                valid_roster = roster_df[(roster_df['Team'] == team1) | (roster_df['Team'] == team2)]
+                active_players_this_season = valid_roster['DB_Name'].tolist()
+            except FileNotFoundError:
+                st.error("⚠️ Roster database missing. Please run `python utils/fetch_squads.py` in your terminal to download the 2026 squads!")
+                return
+
+            # --- 2. EXTREME RECENCY BIAS AI ---
+            working_matches['season_str'] = working_matches['season'].astype(str)
+            current_season_val = working_matches['season_str'].max() 
+
+            def calculate_weight(s):
+                s_str = str(s)
+                if s_str == current_season_val:
+                    return 3.0  # 🔥 Massive 3x boost for current season form!
+                elif current_season_val.isdigit() and s_str == str(int(current_season_val) - 1):
+                    return 1.5  # Slight boost for last year
+                return 1.0      # Base points for older history
+
+            match_subset['weight'] = match_subset['season'].apply(calculate_weight)
+            
+            # --- 3. CALCULATE POINTS ---
             dels = deliveries_df[deliveries_df['match_id'].isin(match_subset['id'])].copy()
             dels = dels.merge(match_subset[['id', 'weight']], left_on='match_id', right_on='id', how='left')
             
@@ -735,11 +830,29 @@ def render_fantasy_assistant():
             
             balls_bowled = dels.groupby('bowler').agg(balls_bowled=('match_id', 'count')).reset_index().rename(columns={'bowler': 'Player'})
             
-            fantasy_df = pd.merge(bat_stats, bowl_stats.rename(columns={'bowler': 'Player'}), on='Player', how='outer').fillna(0)
-            fantasy_df = pd.merge(fantasy_df, balls_bowled, on='Player', how='outer').fillna(0)
-            fantasy_df['Total_Points'] = fantasy_df['batting_pts'] + fantasy_df['bowling_pts']
+            # Merge all historical stats
+            historical_df = pd.merge(bat_stats, bowl_stats.rename(columns={'bowler': 'Player'}), on='Player', how='outer').fillna(0)
+            historical_df = pd.merge(historical_df, balls_bowled, on='Player', how='outer').fillna(0)
+            historical_df['Total_Points'] = historical_df['batting_pts'] + historical_df['bowling_pts']
+            
+            # --- 4. THE ROOKIE INTEGRATOR (MAGIC PURGE V2) ---
+            # 4A. Create a dataframe of ALL active players for this matchup from the official roster
+            fantasy_df = pd.DataFrame({'Player': active_players_this_season})
+            
+            # 4B. Merge the historical points onto the active roster
+            fantasy_df = fantasy_df.merge(historical_df, on='Player', how='left')
+            
+            # 4C. THE ROOKIE BOOST: If an active player has NO history (NaN), give them a Baseline Score!
+            # We give them an average baseline so they don't sit at 0 and get ignored.
+            baseline_score = 35.0  # Average points for a solid debut
+            
+            fantasy_df['Total_Points'] = fantasy_df['Total_Points'].fillna(baseline_score)
+            fantasy_df['balls_faced'] = fantasy_df['balls_faced'].fillna(10) # Give them fake experience
+            fantasy_df['balls_bowled'] = fantasy_df['balls_bowled'].fillna(12) 
+            
             fantasy_df = fantasy_df.sort_values(by='Total_Points', ascending=False)
             
+            # --- 5. DRAFT THE XI ---
             wk_list = ['MS Dhoni', 'RR Pant', 'SV Samson', 'KL Rahul', 'Q de Kock', 'Ishan Kishan', 'N Pooran', 'JC Buttler', 'PD Salt', 'H Klaasen', 'WP Saha', 'KD Karthik']
             
             def assign_role(row):
@@ -749,7 +862,6 @@ def render_fantasy_assistant():
                 return 'BAT'
                 
             fantasy_df['Role'] = fantasy_df.apply(assign_role, axis=1)
-            
             selected_xi = []
             
             def draft_player(role, required_count):
@@ -768,9 +880,15 @@ def render_fantasy_assistant():
                 
             final_team_df = pd.DataFrame(selected_xi).sort_values(by='Total_Points', ascending=False).reset_index(drop=True)
             
+            # Ensure we actually drafted enough players before trying to pull Captains!
+            if len(final_team_df) < 2:
+                st.warning("Not enough active player data to build a full squad.")
+                return
+
             captain = final_team_df.iloc[0]
             vice_captain = final_team_df.iloc[1]
             
+            # --- 6. DISPLAY UI ---
             st.divider()
             st.subheader("👑 Dream11 Leaders")
             c1, c2 = st.columns(2)
