@@ -1,5 +1,9 @@
 # 🏏 IPL Intelligence Platform ⚡
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](YOUR_APP_LINK_HERE)
+
+**[🔴 View the Live Dashboard](https://ipl-2026-pro.streamlit.app/)**
+
 An autonomous, real-time Cricket analytics dashboard powered by Machine Learning and Google Gemini. This platform ingests live match data, calculates dynamic win probabilities, generates automated fantasy lineups, and broadcasts AI-driven match commentary and alerts.
 
 ## 🚀 Key Features
